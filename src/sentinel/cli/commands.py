@@ -13,6 +13,7 @@ from sentinel.core.constants import EXIT_INTERNAL_ERROR, EXIT_SUCCESS, EXIT_USER
 from sentinel.core.engine import CogneeEngine
 from sentinel.core.exceptions import IngestionError, PersistenceError
 from sentinel.core.persistence import get_graph_db_path
+from sentinel.viz import render_ascii
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -74,6 +75,24 @@ def paste() -> None:
 
         db_path = get_graph_db_path()
         console.print(f"[green]✓[/green] Graph saved to {db_path}")
+
+        # Render ASCII visualization (Story 1.5)
+        console.print()  # Blank line separator
+        node_count = len(graph.nodes)
+        edge_count = len(graph.edges)
+        status_msg = (
+            f"[bold blue]Visualizing {node_count} entities "
+            f"and {edge_count} relationships...[/bold blue]"
+        )
+        with Status(status_msg, console=console):
+            ascii_output = render_ascii(graph)
+
+        console.print("[bold]Knowledge Graph:[/bold]")
+        console.print(ascii_output)
+
+        # Add legend explaining node styling
+        console.print()
+        console.print("[dim]Legend: [name] = user-stated, (name) = AI-inferred[/dim]")
 
         raise SystemExit(EXIT_SUCCESS)
 
