@@ -1,8 +1,11 @@
 """CLI commands for Sentinel."""
 
 import asyncio
+import io
 import logging
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import click
 from rich.console import Console
@@ -10,7 +13,6 @@ from rich.status import Status
 
 from sentinel import __version__
 from sentinel.core.constants import EXIT_INTERNAL_ERROR, EXIT_SUCCESS, EXIT_USER_ERROR
-from sentinel.core.engine import CogneeEngine
 from sentinel.core.exceptions import IngestionError, PersistenceError
 from sentinel.core.persistence import get_graph_db_path
 from sentinel.viz import render_ascii
@@ -20,9 +22,50 @@ console = Console()
 error_console = Console(stderr=True)
 
 
+@contextmanager
+def _suppress_cognee_output(debug: bool) -> Iterator[None]:
+    """Suppress Cognee's verbose structlog output unless in debug mode.
+
+    Cognee uses structlog which outputs directly to stderr, bypassing
+    Python's standard logging configuration. This context manager
+    redirects stderr to suppress the noise for better UX.
+    """
+    if debug:
+        # Debug mode: let all output through
+        yield
+        return
+
+    # Suppress stderr (where structlog outputs)
+    old_stderr = sys.stderr
+    sys.stderr = io.StringIO()
+
+    # Also suppress stdout for Cognee's print statements
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+
+    try:
+        yield
+    finally:
+        # Restore original streams
+        sys.stderr = old_stderr
+        sys.stdout = old_stdout
+
+
+def _configure_logging(debug: bool) -> None:
+    """Configure logging levels based on debug flag."""
+    if debug:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.WARNING)
+        logging.getLogger("cognee").setLevel(logging.ERROR)
+        logging.getLogger("structlog").setLevel(logging.ERROR)
+
+
 @click.group()
+@click.option("--debug", "-d", is_flag=True, help="Enable debug logging output")
 @click.version_option(version=__version__, prog_name="sentinel")
-def main() -> None:
+@click.pass_context
+def main(ctx: click.Context, debug: bool) -> None:
     """Sentinel - Personal Energy Guardian CLI.
 
     Detect schedule conflicts that calendars miss. Sentinel uses knowledge graphs
@@ -30,11 +73,14 @@ def main() -> None:
 
     Example: sentinel --help
     """
-    pass
+    ctx.ensure_object(dict)
+    ctx.obj["debug"] = debug
+    _configure_logging(debug)
 
 
 @main.command()
-def paste() -> None:
+@click.pass_context
+def paste(ctx: click.Context) -> None:
     """Paste your schedule text for analysis.
 
     Read schedule text from stdin (interactive or piped).
@@ -44,6 +90,8 @@ def paste() -> None:
         cat schedule.txt | sentinel paste   # Piped from file
         sentinel paste < schedule.txt       # Redirected from file
     """
+    debug = ctx.obj.get("debug", False)
+
     try:
         # Read all input from stdin (works for interactive and piped)
         text = sys.stdin.read()
@@ -61,9 +109,14 @@ def paste() -> None:
         console.print(f"[dim]Received {len(text)} characters.[/dim]")
 
         # Build knowledge graph with progress indicator (AC #4)
+        # Suppress Cognee's verbose logs unless --debug is passed
+        # Import CogneeEngine lazily inside suppression context to catch import-time logs
         with Status("[bold blue]Building knowledge graph...[/bold blue]", console=console):
-            engine = CogneeEngine()
-            graph = asyncio.run(engine.ingest(text))
+            with _suppress_cognee_output(debug):
+                from sentinel.core.engine import CogneeEngine
+
+                engine = CogneeEngine()
+                graph = asyncio.run(engine.ingest(text))
 
         # Show completion summary
         console.print(f"[green]✓[/green] Extracted {len(graph.nodes)} entities")

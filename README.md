@@ -36,6 +36,8 @@ cp .env.template .env
 
 ## Usage
 
+### Basic Commands
+
 ```bash
 # Show help
 uv run sentinel --help
@@ -43,6 +45,63 @@ uv run sentinel --help
 # Show version
 uv run sentinel --version
 ```
+
+### Analyzing Your Schedule
+
+Use the `paste` command to analyze schedule text and build a knowledge graph:
+
+```bash
+# Interactive mode: type/paste text, then press Ctrl+D (EOF) to submit
+uv run sentinel paste
+
+# Pipe from a file
+cat schedule.txt | uv run sentinel paste
+
+# Redirect from file
+uv run sentinel paste < schedule.txt
+
+# Pipe inline text
+echo "Saturday: Football with Jean at 8am. Monday: Presentation at 6pm." | uv run sentinel paste
+```
+
+**Example Output:**
+
+```
+Schedule received. Processing...
+Received 65 characters.
+✓ Extracted 5 entities
+Found 2 relationships.
+✓ Graph saved to /home/user/.local/share/sentinel/graph.db
+
+Knowledge Graph:
+[football]
+     ↓
+[saturday]
+
+[presentation]
+       ↓
+   [monday]
+
+Relationships:
+  [football] --SCHEDULED_AT--> [saturday]
+  [presentation] --SCHEDULED_AT--> [monday]
+
+Legend: [name] = user-stated, (name) = AI-inferred
+```
+
+### Debug Mode
+
+For troubleshooting or seeing what Cognee does behind the scenes:
+
+```bash
+# Enable verbose logging
+uv run sentinel --debug paste < schedule.txt
+
+# Short form
+uv run sentinel -d paste < schedule.txt
+```
+
+Debug mode shows Cognee's internal pipeline progress, entity extraction details, and graph database operations.
 
 ## Development
 
@@ -100,9 +159,14 @@ sentinel/
 │       ├── core/
 │       │   ├── constants.py    # Exit codes, thresholds
 │       │   ├── types.py        # Graph, Node, Edge, ScoredCollision
-│       │   └── engine.py       # GraphEngine protocol + implementations
-│       └── cli/
-│           └── commands.py     # Click CLI commands
+│       │   ├── engine.py       # GraphEngine protocol + CogneeEngine
+│       │   ├── persistence.py  # Graph persistence (JSON-based)
+│       │   └── exceptions.py   # Custom exception classes
+│       ├── cli/
+│       │   └── commands.py     # Click CLI commands
+│       └── viz/
+│           ├── __init__.py     # Module exports
+│           └── ascii.py        # ASCII graph visualization (phart)
 ├── tests/
 │   ├── conftest.py             # MockEngine and shared fixtures
 │   ├── fixtures/
@@ -118,9 +182,16 @@ sentinel/
 
 Sentinel follows a modular architecture:
 
-- **Core Module**: Contains types, constants, and the GraphEngine protocol. Never imports from CLI or visualization modules.
-- **CLI Module**: Click-based command-line interface
+- **Core Module**: Contains types, constants, persistence, and the GraphEngine protocol. Never imports from CLI or visualization modules.
+- **CLI Module**: Click-based command-line interface with Rich terminal styling
+- **Viz Module**: ASCII graph visualization using phart library. Imports only types from core.
 - **GraphEngine Protocol**: Async interface for graph operations, enabling both mock and real implementations
+
+```
+core/  ←── viz/ (types only)
+  ↑         ↑
+  └── cli/ ─┘
+```
 
 ## Technology Stack
 
@@ -130,7 +201,9 @@ Sentinel follows a modular architecture:
 | uv           | Package management                      |
 | Click        | CLI framework                           |
 | Rich         | Terminal styling                        |
-| Cognee       | Knowledge graph + LLM                   |
+| Cognee       | Knowledge graph + LLM entity extraction |
+| phart        | ASCII graph visualization               |
+| NetworkX     | Graph data structure (phart dependency) |
 | pytest       | Testing                                 |
 | ruff         | Linting and formatting                  |
 | ty           | Type Checking                           |

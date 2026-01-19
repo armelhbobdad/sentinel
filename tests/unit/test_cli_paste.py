@@ -43,7 +43,7 @@ class TestPasteCommand:
         """Test that valid input returns exit code 0 (AC: #1, #3)."""
         runner = CliRunner()
         with patch(
-            "sentinel.cli.commands.CogneeEngine.ingest",
+            "sentinel.core.engine.CogneeEngine.ingest",
             new_callable=AsyncMock,
             return_value=_create_mock_graph(),
         ):
@@ -89,7 +89,7 @@ class TestPasteCommand:
         runner = CliRunner()
         unicode_text = "Monday: Coffee with María ☕\n"
         with patch(
-            "sentinel.cli.commands.CogneeEngine.ingest",
+            "sentinel.core.engine.CogneeEngine.ingest",
             new_callable=AsyncMock,
             return_value=_create_mock_graph(),
         ):
@@ -104,7 +104,7 @@ class TestPasteCommand:
         runner = CliRunner()
         emoji_text = "Tuesday: Team meeting 🎉\n"
         with patch(
-            "sentinel.cli.commands.CogneeEngine.ingest",
+            "sentinel.core.engine.CogneeEngine.ingest",
             new_callable=AsyncMock,
             return_value=_create_mock_graph(),
         ):
@@ -117,7 +117,7 @@ class TestPasteCommand:
         runner = CliRunner()
         cjk_text = "Wednesday: 日本語テスト\n"
         with patch(
-            "sentinel.cli.commands.CogneeEngine.ingest",
+            "sentinel.core.engine.CogneeEngine.ingest",
             new_callable=AsyncMock,
             return_value=_create_mock_graph(),
         ):
@@ -130,7 +130,7 @@ class TestPasteCommand:
         runner = CliRunner()
         accented_text = "Meeting with Jean-Pierre about the über-important project\n"
         with patch(
-            "sentinel.cli.commands.CogneeEngine.ingest",
+            "sentinel.core.engine.CogneeEngine.ingest",
             new_callable=AsyncMock,
             return_value=_create_mock_graph(),
         ):
@@ -143,7 +143,7 @@ class TestPasteCommand:
         runner = CliRunner()
         text = "Monday: Meeting\n"
         with patch(
-            "sentinel.cli.commands.CogneeEngine.ingest",
+            "sentinel.core.engine.CogneeEngine.ingest",
             new_callable=AsyncMock,
             return_value=_create_mock_graph(),
         ):
@@ -159,7 +159,7 @@ class TestPasteCommand:
         runner = CliRunner()
         # CliRunner's input parameter simulates piped stdin
         with patch(
-            "sentinel.cli.commands.CogneeEngine.ingest",
+            "sentinel.core.engine.CogneeEngine.ingest",
             new_callable=AsyncMock,
             return_value=_create_mock_graph(),
         ):
@@ -177,7 +177,7 @@ Wednesday: Project review
 Thursday: Sprint planning
 Friday: Demo"""
         with patch(
-            "sentinel.cli.commands.CogneeEngine.ingest",
+            "sentinel.core.engine.CogneeEngine.ingest",
             new_callable=AsyncMock,
             return_value=_create_mock_graph(),
         ):
@@ -210,7 +210,7 @@ Friday: Demo"""
         """Test that success message matches AC #1 exactly."""
         runner = CliRunner()
         with patch(
-            "sentinel.cli.commands.CogneeEngine.ingest",
+            "sentinel.core.engine.CogneeEngine.ingest",
             new_callable=AsyncMock,
             return_value=_create_mock_graph(),
         ):
@@ -227,7 +227,7 @@ Friday: Demo"""
         runner = CliRunner()
         mock_graph = _create_mock_graph()
         with patch(
-            "sentinel.cli.commands.CogneeEngine.ingest",
+            "sentinel.core.engine.CogneeEngine.ingest",
             new_callable=AsyncMock,
             return_value=mock_graph,
         ):
@@ -243,7 +243,7 @@ Friday: Demo"""
         runner = CliRunner()
         mock_graph = _create_mock_graph()
         with patch(
-            "sentinel.cli.commands.CogneeEngine.ingest",
+            "sentinel.core.engine.CogneeEngine.ingest",
             new_callable=AsyncMock,
             return_value=mock_graph,
         ):
@@ -261,7 +261,7 @@ Friday: Demo"""
 
         runner = CliRunner()
         with patch(
-            "sentinel.cli.commands.CogneeEngine.ingest",
+            "sentinel.core.engine.CogneeEngine.ingest",
             new_callable=AsyncMock,
             side_effect=IngestionError("Failed to process schedule: API timeout"),
         ):
