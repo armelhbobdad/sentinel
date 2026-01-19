@@ -1,14 +1,39 @@
 """Unit tests for the paste CLI command.
 
 Tests for Story 1.2: Schedule Text Ingestion.
+Updated for Story 1.3: Entity Extraction & Graph Building.
 """
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from click.testing import CliRunner
 
 from sentinel.cli.commands import main
 from sentinel.core.constants import EXIT_INTERNAL_ERROR, EXIT_SUCCESS, EXIT_USER_ERROR
+from sentinel.core.types import Edge, Graph, Node
+
+
+def _create_mock_graph() -> Graph:
+    """Create a mock graph for testing CLI output."""
+    return Graph(
+        nodes=[
+            Node(id="person-steve", label="Steve", type="Person", source="user-stated"),
+            Node(
+                id="activity-meeting",
+                label="Meeting",
+                type="Activity",
+                source="user-stated",
+            ),
+        ],
+        edges=[
+            Edge(
+                source_id="activity-meeting",
+                target_id="person-steve",
+                relationship="INVOLVES",
+                confidence=0.85,
+            ),
+        ],
+    )
 
 
 class TestPasteCommand:
@@ -17,7 +42,12 @@ class TestPasteCommand:
     def test_paste_with_valid_input_returns_success(self) -> None:
         """Test that valid input returns exit code 0 (AC: #1, #3)."""
         runner = CliRunner()
-        result = runner.invoke(main, ["paste"], input="Monday: Meeting with Steve\n")
+        with patch(
+            "sentinel.cli.commands.CogneeEngine.ingest",
+            new_callable=AsyncMock,
+            return_value=_create_mock_graph(),
+        ):
+            result = runner.invoke(main, ["paste"], input="Monday: Meeting with Steve\n")
 
         assert result.exit_code == EXIT_SUCCESS, f"Expected exit code 0, got {result.exit_code}"
         assert "Schedule received" in result.output, (
@@ -58,7 +88,12 @@ class TestPasteCommand:
         """Test that Unicode characters are preserved (AC: #5)."""
         runner = CliRunner()
         unicode_text = "Monday: Coffee with María ☕\n"
-        result = runner.invoke(main, ["paste"], input=unicode_text)
+        with patch(
+            "sentinel.cli.commands.CogneeEngine.ingest",
+            new_callable=AsyncMock,
+            return_value=_create_mock_graph(),
+        ):
+            result = runner.invoke(main, ["paste"], input=unicode_text)
 
         assert result.exit_code == EXIT_SUCCESS, f"Expected exit code 0, got {result.exit_code}"
         # Should not raise errors with Unicode
@@ -68,7 +103,12 @@ class TestPasteCommand:
         """Test that emoji are preserved (AC: #5)."""
         runner = CliRunner()
         emoji_text = "Tuesday: Team meeting 🎉\n"
-        result = runner.invoke(main, ["paste"], input=emoji_text)
+        with patch(
+            "sentinel.cli.commands.CogneeEngine.ingest",
+            new_callable=AsyncMock,
+            return_value=_create_mock_graph(),
+        ):
+            result = runner.invoke(main, ["paste"], input=emoji_text)
 
         assert result.exit_code == EXIT_SUCCESS, f"Expected exit code 0, got {result.exit_code}"
 
@@ -76,7 +116,12 @@ class TestPasteCommand:
         """Test that CJK characters are preserved (AC: #5)."""
         runner = CliRunner()
         cjk_text = "Wednesday: 日本語テスト\n"
-        result = runner.invoke(main, ["paste"], input=cjk_text)
+        with patch(
+            "sentinel.cli.commands.CogneeEngine.ingest",
+            new_callable=AsyncMock,
+            return_value=_create_mock_graph(),
+        ):
+            result = runner.invoke(main, ["paste"], input=cjk_text)
 
         assert result.exit_code == EXIT_SUCCESS, f"Expected exit code 0, got {result.exit_code}"
 
@@ -84,7 +129,12 @@ class TestPasteCommand:
         """Test that accented characters are preserved (AC: #5)."""
         runner = CliRunner()
         accented_text = "Meeting with Jean-Pierre about the über-important project\n"
-        result = runner.invoke(main, ["paste"], input=accented_text)
+        with patch(
+            "sentinel.cli.commands.CogneeEngine.ingest",
+            new_callable=AsyncMock,
+            return_value=_create_mock_graph(),
+        ):
+            result = runner.invoke(main, ["paste"], input=accented_text)
 
         assert result.exit_code == EXIT_SUCCESS, f"Expected exit code 0, got {result.exit_code}"
 
@@ -92,7 +142,12 @@ class TestPasteCommand:
         """Test that confirmation shows character count (AC: #3)."""
         runner = CliRunner()
         text = "Monday: Meeting\n"
-        result = runner.invoke(main, ["paste"], input=text)
+        with patch(
+            "sentinel.cli.commands.CogneeEngine.ingest",
+            new_callable=AsyncMock,
+            return_value=_create_mock_graph(),
+        ):
+            result = runner.invoke(main, ["paste"], input=text)
 
         assert result.exit_code == EXIT_SUCCESS, f"Expected exit code 0, got {result.exit_code}"
         assert "characters" in result.output.lower(), (
@@ -103,7 +158,12 @@ class TestPasteCommand:
         """Test that piped input works via CliRunner (AC: #2)."""
         runner = CliRunner()
         # CliRunner's input parameter simulates piped stdin
-        result = runner.invoke(main, ["paste"], input="Piped schedule text\n")
+        with patch(
+            "sentinel.cli.commands.CogneeEngine.ingest",
+            new_callable=AsyncMock,
+            return_value=_create_mock_graph(),
+        ):
+            result = runner.invoke(main, ["paste"], input="Piped schedule text\n")
 
         assert result.exit_code == EXIT_SUCCESS, f"Expected exit code 0, got {result.exit_code}"
         assert "Schedule received" in result.output, f"Expected confirmation: {result.output}"
@@ -116,7 +176,12 @@ Tuesday: 1:1 with manager
 Wednesday: Project review
 Thursday: Sprint planning
 Friday: Demo"""
-        result = runner.invoke(main, ["paste"], input=multiline)
+        with patch(
+            "sentinel.cli.commands.CogneeEngine.ingest",
+            new_callable=AsyncMock,
+            return_value=_create_mock_graph(),
+        ):
+            result = runner.invoke(main, ["paste"], input=multiline)
 
         assert result.exit_code == EXIT_SUCCESS, f"Expected exit code 0, got {result.exit_code}"
         assert "Schedule received" in result.output, f"Expected confirmation: {result.output}"
@@ -144,10 +209,67 @@ Friday: Demo"""
     def test_paste_shows_exact_success_message(self) -> None:
         """Test that success message matches AC #1 exactly."""
         runner = CliRunner()
-        result = runner.invoke(main, ["paste"], input="Monday: Meeting\n")
+        with patch(
+            "sentinel.cli.commands.CogneeEngine.ingest",
+            new_callable=AsyncMock,
+            return_value=_create_mock_graph(),
+        ):
+            result = runner.invoke(main, ["paste"], input="Monday: Meeting\n")
 
         assert result.exit_code == EXIT_SUCCESS, f"Expected exit code 0, got {result.exit_code}"
         # AC #1 specifies: "Schedule received. Processing..."
         assert "Schedule received. Processing..." in result.output, (
             f"Expected exact message 'Schedule received. Processing...' in output: {result.output}"
+        )
+
+    def test_paste_shows_entity_count(self) -> None:
+        """Test that completion shows entity count (Story 1.3 AC: #4)."""
+        runner = CliRunner()
+        mock_graph = _create_mock_graph()
+        with patch(
+            "sentinel.cli.commands.CogneeEngine.ingest",
+            new_callable=AsyncMock,
+            return_value=mock_graph,
+        ):
+            result = runner.invoke(main, ["paste"], input="Monday: Meeting with Steve\n")
+
+        assert result.exit_code == EXIT_SUCCESS, f"Expected exit code 0, got {result.exit_code}"
+        # Should show entity count
+        assert "Extracted" in result.output, f"Expected 'Extracted' in output: {result.output}"
+        assert "entities" in result.output, f"Expected 'entities' in output: {result.output}"
+
+    def test_paste_shows_relationship_count(self) -> None:
+        """Test that completion shows relationship count (Story 1.3 AC: #4)."""
+        runner = CliRunner()
+        mock_graph = _create_mock_graph()
+        with patch(
+            "sentinel.cli.commands.CogneeEngine.ingest",
+            new_callable=AsyncMock,
+            return_value=mock_graph,
+        ):
+            result = runner.invoke(main, ["paste"], input="Monday: Meeting with Steve\n")
+
+        assert result.exit_code == EXIT_SUCCESS, f"Expected exit code 0, got {result.exit_code}"
+        # Should show relationship count
+        assert "relationships" in result.output, (
+            f"Expected 'relationships' in output: {result.output}"
+        )
+
+    def test_paste_handles_ingestion_error(self) -> None:
+        """Test that IngestionError returns exit code 2 (Story 1.3 AC: #6)."""
+        from sentinel.core.exceptions import IngestionError
+
+        runner = CliRunner()
+        with patch(
+            "sentinel.cli.commands.CogneeEngine.ingest",
+            new_callable=AsyncMock,
+            side_effect=IngestionError("Failed to process schedule: API timeout"),
+        ):
+            result = runner.invoke(main, ["paste"], input="Monday: Meeting with Steve\n")
+
+        assert result.exit_code == EXIT_INTERNAL_ERROR, (
+            f"Expected exit code 2, got {result.exit_code}"
+        )
+        assert "Failed to process schedule" in result.stderr, (
+            f"Expected error message in stderr: {result.stderr}"
         )

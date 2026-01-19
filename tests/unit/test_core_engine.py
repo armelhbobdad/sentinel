@@ -66,13 +66,15 @@ def test_cognee_engine_implements_protocol() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cognee_engine_ingest_raises_not_implemented() -> None:
-    """CogneeEngine.ingest should raise NotImplementedError (stub)."""
+async def test_cognee_engine_ingest_raises_ingestion_error_without_api_key() -> None:
+    """CogneeEngine.ingest should raise IngestionError when API key is missing."""
     from sentinel.core.engine import CogneeEngine
+    from sentinel.core.exceptions import IngestionError
 
     engine = CogneeEngine()
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(IngestionError) as exc_info:
         await engine.ingest("test text")
+    assert "Failed to process schedule" in str(exc_info.value)
 
 
 @pytest.mark.asyncio

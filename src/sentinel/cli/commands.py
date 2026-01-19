@@ -1,13 +1,17 @@
 """CLI commands for Sentinel."""
 
+import asyncio
 import logging
 import sys
 
 import click
 from rich.console import Console
+from rich.status import Status
 
 from sentinel import __version__
 from sentinel.core.constants import EXIT_INTERNAL_ERROR, EXIT_SUCCESS, EXIT_USER_ERROR
+from sentinel.core.engine import CogneeEngine
+from sentinel.core.exceptions import IngestionError
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -54,9 +58,24 @@ def paste() -> None:
         console.print("[green]Schedule received. Processing...[/green]")
         console.print(f"[dim]Received {len(text)} characters.[/dim]")
 
-        # TODO: Story 1.3 will add entity extraction here
+        # Build knowledge graph with progress indicator (AC #4)
+        with Status("[bold blue]Building knowledge graph...[/bold blue]", console=console):
+            engine = CogneeEngine()
+            graph = asyncio.run(engine.ingest(text))
+
+        # Show completion summary
+        console.print(f"[green]✓[/green] Extracted {len(graph.nodes)} entities")
+        console.print(f"[dim]Found {len(graph.edges)} relationships.[/dim]")
+
+        # TODO: Story 1.4 will persist the graph
 
         raise SystemExit(EXIT_SUCCESS)
+
+    except IngestionError as e:
+        # Handle Cognee API failures (AC #6)
+        logger.exception("Ingestion failed")
+        error_console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
     except SystemExit:
         raise
     except Exception:
