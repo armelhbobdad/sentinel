@@ -1,0 +1,25 @@
+# Lefthook configuration for Sentinel
+# Pre-commit hooks for code quality
+
+pre-commit:
+  parallel: true
+  commands:
+    format:
+      glob: "*.py"
+      run: uv run ruff format --check {staged_files}
+      fail_text: "Code formatting issues found. Run 'uv run ruff format .' to fix."
+
+    lint:
+      glob: "*.py"
+      run: uv run ruff check {staged_files}
+      fail_text: "Linting issues found. Run 'uv run ruff check --fix .' to fix."
+
+    typecheck:
+      glob: "*.py"
+      run: uv run ty check
+      fail_text: "Type checking failed. Fix type errors before committing."
+
+    test-fast:
+      glob: "*.py"
+      run: uv run pytest tests/unit/ -q
+      fail_text: "Fast unit tests failed. Fix failing tests before committing."

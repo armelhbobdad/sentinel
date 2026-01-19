@@ -1,0 +1,52 @@
+[project]
+name = "sentinel"
+version = "0.1.0"
+description = "Personal Energy Guardian - CLI tool for detecting schedule conflicts"
+readme = "README.md"
+authors = [
+    { name = "armel", email = "armelhbobdad@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "click",
+    "rich",
+    "cognee",
+    "phart",
+    "python-dotenv",
+]
+
+[project.scripts]
+sentinel = "sentinel.cli.commands:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "pytest-asyncio",
+    "ruff",
+    "lefthook>=2.0.15",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-v --tb=short"
+markers = [
+    "slow: marks tests as slow",
+    "live: requires API key for real Cognee calls",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
