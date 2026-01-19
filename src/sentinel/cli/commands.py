@@ -12,7 +12,12 @@ from rich.console import Console
 from rich.status import Status
 
 from sentinel import __version__
-from sentinel.core.constants import EXIT_INTERNAL_ERROR, EXIT_SUCCESS, EXIT_USER_ERROR
+from sentinel.core.constants import (
+    EXIT_COLLISION_DETECTED,
+    EXIT_INTERNAL_ERROR,
+    EXIT_SUCCESS,
+    EXIT_USER_ERROR,
+)
 from sentinel.core.exceptions import IngestionError, PersistenceError
 from sentinel.core.persistence import get_graph_db_path
 from sentinel.viz import render_ascii
@@ -166,6 +171,106 @@ def paste(ctx: click.Context) -> None:
     except Exception:
         logger.exception("Unhandled exception in paste command")
         error_console.print("[red]Unexpected error[/red]")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+
+
+@main.command()
+@click.pass_context
+def check(ctx: click.Context) -> None:
+    """Check your schedule for energy collisions.
+
+    Analyzes the knowledge graph for collision patterns where energy-draining
+    activities conflict with activities requiring focus.
+
+    Pattern detected: DRAINS → CONFLICTS_WITH → REQUIRES
+
+    Examples:
+        sentinel check              # Check for collisions in saved graph
+        sentinel paste < schedule.txt && sentinel check   # Ingest then check
+    """
+    from rich.progress import Progress, SpinnerColumn, TextColumn
+
+    from sentinel.core.engine import CogneeEngine
+    from sentinel.core.exceptions import PersistenceError
+    from sentinel.core.rules import (
+        find_collision_paths_async,
+        score_collision,
+    )
+
+    debug = ctx.obj.get("debug", False)
+    if debug:
+        logger.debug("Starting collision check")
+
+    try:
+        engine = CogneeEngine()
+        graph = engine.load()
+
+        if graph is None:
+            error_console.print("[yellow]No schedule data found.[/yellow]")
+            error_console.print("Run [bold]sentinel paste[/bold] first to add your schedule.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        if not graph.edges:
+            console.print("[green]✓[/green] No relationships to analyze.")
+            console.print("[dim]Your schedule looks balanced.[/dim]")
+            raise SystemExit(EXIT_SUCCESS)
+
+        # Track progress during traversal
+        relationships_analyzed = [0]  # Mutable container for closure
+
+        def update_progress(count: int) -> None:
+            relationships_analyzed[0] = count
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            task = progress.add_task(
+                f"Analyzing {len(graph.edges)} relationships...",
+                total=None,
+            )
+
+            # Run async traversal with timeout support
+            result = asyncio.run(
+                find_collision_paths_async(
+                    graph,
+                    progress_callback=update_progress,
+                )
+            )
+
+            # Update description with actual count
+            progress.update(
+                task,
+                description=f"Analyzed {result.relationships_analyzed} relationships...",
+            )
+
+        # Handle timeout warning
+        if result.timed_out:
+            error_console.print("[yellow]Analysis timed out. Showing partial results.[/yellow]")
+
+        # Score each collision path
+        collisions = [score_collision(p, graph) for p in result.paths]
+
+        if not collisions:
+            console.print("[green]✓[/green] No energy collisions detected!")
+            console.print("[dim]Your schedule looks balanced.[/dim]")
+            raise SystemExit(EXIT_SUCCESS)
+
+        # Story 2.3 will implement detailed display
+        console.print(f"[yellow]⚠[/yellow] Found {len(collisions)} potential collision(s).")
+        raise SystemExit(EXIT_COLLISION_DETECTED)
+
+    except PersistenceError as e:
+        logger.exception("Failed to load graph")
+        error_console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+    except SystemExit:
+        raise
+    except Exception:
+        logger.exception("Unhandled exception in check command")
+        error_console.print("[red]Unexpected error during check[/red]")
         raise SystemExit(EXIT_INTERNAL_ERROR)
 
 

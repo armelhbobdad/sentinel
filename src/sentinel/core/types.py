@@ -4,6 +4,7 @@ These types define the graph schema and collision detection structures.
 All types are immutable dataclasses for thread safety and predictability.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -70,14 +71,14 @@ class ScoredCollision:
     along with confidence scores and source breakdown.
 
     Attributes:
-        path: The collision path as a list of node/edge labels.
+        path: The collision path as a tuple of node/edge labels (immutable).
         confidence: Overall confidence score for this collision (0.0 to 1.0).
-        source_breakdown: Breakdown of confidence by source type.
+        source_breakdown: Breakdown of source counts (ai_inferred, user_stated).
     """
 
-    path: list[str]
+    path: tuple[str, ...]
     confidence: float
-    source_breakdown: dict[str, float] = field(default_factory=dict)
+    source_breakdown: Mapping[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -353,20 +353,19 @@ class MockEngine:
                             + requires_edge.confidence
                         ) / 3
 
-                        # Determine source breakdown
+                        # Determine source breakdown (counts, not ratios)
                         path_nodes = [source_node, target_node]
                         user_stated = sum(1 for n in path_nodes if n.source == "user-stated")
                         ai_inferred = sum(1 for n in path_nodes if n.source == "ai-inferred")
-                        total = user_stated + ai_inferred
 
                         source_breakdown = {
-                            "user-stated": user_stated / total if total > 0 else 0.0,
-                            "ai-inferred": ai_inferred / total if total > 0 else 0.0,
+                            "user_stated": user_stated,
+                            "ai_inferred": ai_inferred,
                         }
 
                         collisions.append(
                             ScoredCollision(
-                                path=path,
+                                path=tuple(path),  # Convert to tuple for immutability
                                 confidence=round(avg_confidence, 2),
                                 source_breakdown=source_breakdown,
                             )
