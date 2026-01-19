@@ -4,15 +4,18 @@ Defines the interface for knowledge graph operations and provides
 implementations including Cognee-based extraction.
 """
 
+import json
 import logging
 import re
 import unicodedata
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 import cognee
 from cognee.api.v1.search import SearchType
 
-from sentinel.core.exceptions import IngestionError
+from sentinel.core.exceptions import IngestionError, PersistenceError
+from sentinel.core.persistence import ensure_data_directory, get_graph_db_path
 from sentinel.core.types import (
     Correction,
     Edge,
@@ -168,6 +171,14 @@ class GraphEngine(Protocol):
 
         Args:
             graph: The graph to persist.
+        """
+        ...
+
+    def load(self) -> Graph | None:
+        """Load persisted graph from storage.
+
+        Returns:
+            Loaded graph, or None if no graph exists.
         """
         ...
 
@@ -390,7 +401,7 @@ class CogneeEngine:
 
         # Handle different result formats from Cognee
         if results is None:
-            return Graph(nodes=[], edges=[])
+            return Graph(nodes=(), edges=())
 
         # Extract entities and relations from results
         entities = self._extract_entities(results)
@@ -441,7 +452,7 @@ class CogneeEngine:
         # Validate all edges reference existing nodes (H2 fix)
         valid_edges = self._validate_edge_references(valid_edges, seen_node_ids)
 
-        return Graph(nodes=nodes, edges=valid_edges)
+        return Graph(nodes=tuple(nodes), edges=tuple(valid_edges))
 
     def _extract_entities(self, results: Any) -> list[dict[str, Any]]:
         """Extract entities from Cognee results.
@@ -586,12 +597,124 @@ class CogneeEngine:
         raise NotImplementedError("CogneeEngine.mutate not yet implemented")
 
     def persist(self, graph: Graph) -> None:
-        """Persist the graph to storage.
+        """Persist graph to JSON file.
+
+        Uses atomic write (temp file + rename) to prevent corruption.
 
         Args:
             graph: The graph to persist.
 
         Raises:
-            NotImplementedError: This is a stub implementation.
+            PersistenceError: If file I/O fails.
         """
-        raise NotImplementedError("CogneeEngine.persist not yet implemented")
+        ensure_data_directory()
+        db_path = get_graph_db_path()
+
+        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+        # Preserve created_at from existing file if it exists
+        created_at = now
+        if db_path.exists():
+            try:
+                with open(db_path, encoding="utf-8") as f:
+                    existing = json.load(f)
+                    created_at = existing.get("created_at", now)
+            except (json.JSONDecodeError, OSError):
+                # If existing file is corrupted, use current time
+                pass
+
+        data = {
+            "version": "1.0",
+            "created_at": created_at,
+            "updated_at": now,
+            "nodes": [self._node_to_dict(n) for n in graph.nodes],
+            "edges": [self._edge_to_dict(e) for e in graph.edges],
+        }
+
+        # Atomic write: write to temp, then rename
+        temp_path = db_path.with_suffix(".tmp")
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            temp_path.replace(db_path)  # Atomic on POSIX
+        except OSError as e:
+            raise PersistenceError(f"Failed to save graph: {e}") from e
+        finally:
+            # Clean up temp file if it still exists (e.g., if replace() failed)
+            try:
+                if temp_path.exists():
+                    temp_path.unlink()
+            except OSError:
+                pass  # Best effort cleanup, ignore errors
+
+    def _node_to_dict(self, node: Node) -> dict[str, Any]:
+        """Serialize Node to dictionary."""
+        return {
+            "id": node.id,
+            "label": node.label,
+            "type": node.type,
+            "source": node.source,
+            "metadata": dict(node.metadata) if node.metadata else {},
+        }
+
+    def _edge_to_dict(self, edge: Edge) -> dict[str, Any]:
+        """Serialize Edge to dictionary."""
+        return {
+            "source_id": edge.source_id,
+            "target_id": edge.target_id,
+            "relationship": edge.relationship,
+            "confidence": edge.confidence,
+            "metadata": dict(edge.metadata) if edge.metadata else {},
+        }
+
+    def load(self) -> Graph | None:
+        """Load persisted graph from JSON file.
+
+        Returns:
+            Graph if successfully loaded, None if no graph.db file exists.
+
+        Raises:
+            PersistenceError: If file exists but is corrupted or unreadable.
+        """
+        db_path = get_graph_db_path()
+
+        if not db_path.exists():
+            return None
+
+        try:
+            with open(db_path, encoding="utf-8") as f:
+                data = json.load(f)
+
+            nodes = tuple(self._dict_to_node(n) for n in data.get("nodes", []))
+            edges = tuple(self._dict_to_edge(e) for e in data.get("edges", []))
+
+            return Graph(nodes=nodes, edges=edges)
+
+        except json.JSONDecodeError as e:
+            raise PersistenceError(
+                "Graph database corrupted. Run `sentinel paste` to rebuild."
+            ) from e
+        except (KeyError, TypeError) as e:
+            raise PersistenceError(
+                "Graph database corrupted. Run `sentinel paste` to rebuild."
+            ) from e
+
+    def _dict_to_node(self, d: dict[str, Any]) -> Node:
+        """Deserialize dictionary to Node."""
+        return Node(
+            id=d["id"],
+            label=d["label"],
+            type=d["type"],
+            source=d["source"],
+            metadata=d.get("metadata", {}),
+        )
+
+    def _dict_to_edge(self, d: dict[str, Any]) -> Edge:
+        """Deserialize dictionary to Edge."""
+        return Edge(
+            source_id=d["source_id"],
+            target_id=d["target_id"],
+            relationship=d["relationship"],
+            confidence=d.get("confidence", 0.8),
+            metadata=d.get("metadata", {}),
+        )

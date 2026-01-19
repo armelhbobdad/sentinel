@@ -18,3 +18,13 @@ class IngestionError(SentinelError):
     """
 
     pass
+
+
+class PersistenceError(SentinelError):
+    """Error during graph persistence operations.
+
+    Raised when saving or loading the graph database fails
+    due to I/O errors or corrupted data.
+    """
+
+    pass

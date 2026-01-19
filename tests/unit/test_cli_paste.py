@@ -16,7 +16,7 @@ from sentinel.core.types import Edge, Graph, Node
 def _create_mock_graph() -> Graph:
     """Create a mock graph for testing CLI output."""
     return Graph(
-        nodes=[
+        nodes=(
             Node(id="person-steve", label="Steve", type="Person", source="user-stated"),
             Node(
                 id="activity-meeting",
@@ -24,15 +24,15 @@ def _create_mock_graph() -> Graph:
                 type="Activity",
                 source="user-stated",
             ),
-        ],
-        edges=[
+        ),
+        edges=(
             Edge(
                 source_id="activity-meeting",
                 target_id="person-steve",
                 relationship="INVOLVES",
                 confidence=0.85,
             ),
-        ],
+        ),
     )
 
 

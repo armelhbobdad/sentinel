@@ -60,7 +60,7 @@ def test_cognee_engine_implements_protocol() -> None:
     from sentinel.core.engine import CogneeEngine
 
     # Check that CogneeEngine has all the methods defined in GraphEngine
-    protocol_methods = ["ingest", "query_collisions", "get_neighbors", "mutate", "persist"]
+    protocol_methods = ["ingest", "query_collisions", "get_neighbors", "mutate", "persist", "load"]
     for method in protocol_methods:
         assert hasattr(CogneeEngine, method), f"CogneeEngine should have {method} method"
 
@@ -84,7 +84,7 @@ async def test_cognee_engine_query_collisions_raises_not_implemented() -> None:
     from sentinel.core.types import Graph
 
     engine = CogneeEngine()
-    graph = Graph(nodes=[], edges=[])
+    graph = Graph(nodes=(), edges=())
     with pytest.raises(NotImplementedError):
         await engine.query_collisions(graph)
 
@@ -105,18 +105,24 @@ def test_cognee_engine_mutate_raises_not_implemented() -> None:
     from sentinel.core.types import Correction, Graph
 
     engine = CogneeEngine()
-    graph = Graph(nodes=[], edges=[])
+    graph = Graph(nodes=(), edges=())
     correction = Correction(node_id="node-1", action="delete", new_value=None)
     with pytest.raises(NotImplementedError):
         engine.mutate(graph, correction)
 
 
-def test_cognee_engine_persist_raises_not_implemented() -> None:
-    """CogneeEngine.persist should raise NotImplementedError (stub)."""
+def test_cognee_engine_persist_is_implemented(tmp_path) -> None:
+    """CogneeEngine.persist should be implemented (Story 1.4)."""
     from sentinel.core.engine import CogneeEngine
     from sentinel.core.types import Graph
 
-    engine = CogneeEngine()
-    graph = Graph(nodes=[], edges=[])
-    with pytest.raises(NotImplementedError):
+    # Use temp directory to avoid polluting real data
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("XDG_DATA_HOME", str(tmp_path))
+        engine = CogneeEngine()
+        graph = Graph(nodes=(), edges=())
+        # Should not raise - persist() is now implemented
         engine.persist(graph)
+
+        db_path = tmp_path / "sentinel" / "graph.db"
+        assert db_path.exists(), "Graph should be persisted to file"

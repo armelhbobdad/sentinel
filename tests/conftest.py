@@ -149,7 +149,7 @@ class MockEngine:
             ),
         ]
 
-        return Graph(nodes=nodes, edges=edges)
+        return Graph(nodes=tuple(nodes), edges=tuple(edges))
 
     def _create_boring_graph(self, text: str) -> Graph:
         """Create a graph without collision scenario (boring week)."""
@@ -223,7 +223,7 @@ class MockEngine:
             ),
         ]
 
-        return Graph(nodes=nodes, edges=edges)
+        return Graph(nodes=tuple(nodes), edges=tuple(edges))
 
     def _create_unicode_graph(self, text: str) -> Graph:
         """Create a graph preserving Unicode characters (edge cases)."""
@@ -282,7 +282,7 @@ class MockEngine:
             ),
         ]
 
-        return Graph(nodes=nodes, edges=edges)
+        return Graph(nodes=tuple(nodes), edges=tuple(edges))
 
     async def query_collisions(self, graph: Graph) -> list[ScoredCollision]:
         """Detect collisions in the graph.
@@ -385,7 +385,7 @@ class MockEngine:
             Subgraph containing the node and its neighbors.
         """
         # For MockEngine, return empty subgraph
-        return Subgraph(nodes=[], edges=[])
+        return Subgraph(nodes=(), edges=())
 
     def mutate(self, graph: Graph, correction: Correction) -> Graph:
         """Apply a correction to the graph.
@@ -405,7 +405,7 @@ class MockEngine:
                 for e in graph.edges
                 if e.source_id != correction.node_id and e.target_id != correction.node_id
             ]
-            return Graph(nodes=new_nodes, edges=new_edges)
+            return Graph(nodes=tuple(new_nodes), edges=tuple(new_edges))
 
         elif correction.action == "modify" and correction.new_value:
             # Modify the node's label
@@ -424,7 +424,7 @@ class MockEngine:
                     )
                 else:
                     new_nodes.append(node)
-            return Graph(nodes=new_nodes, edges=list(graph.edges))
+            return Graph(nodes=tuple(new_nodes), edges=graph.edges)
 
         # Unknown action - return unchanged
         return graph
@@ -436,6 +436,14 @@ class MockEngine:
             graph: The graph to persist.
         """
         self._stored_graph = graph
+
+    def load(self) -> Graph | None:
+        """Load persisted graph from memory.
+
+        Returns:
+            Previously persisted Graph, or None if no graph was persisted.
+        """
+        return self._stored_graph
 
 
 @pytest.fixture

@@ -21,7 +21,7 @@ FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "schedules"
 def _create_collision_graph() -> Graph:
     """Create a collision graph matching maya_typical_week scenario."""
     return Graph(
-        nodes=[
+        nodes=(
             Node(
                 id="person-aunt-susan",
                 label="Aunt Susan",
@@ -46,8 +46,8 @@ def _create_collision_graph() -> Graph:
                 type="Activity",
                 source="user-stated",
             ),
-        ],
-        edges=[
+        ),
+        edges=(
             Edge(
                 source_id="person-aunt-susan",
                 target_id="energy-low",
@@ -60,14 +60,14 @@ def _create_collision_graph() -> Graph:
                 relationship="INVOLVES",
                 confidence=0.80,
             ),
-        ],
+        ),
     )
 
 
 def _create_boring_graph() -> Graph:
     """Create a boring graph matching maya_boring_week scenario."""
     return Graph(
-        nodes=[
+        nodes=(
             Node(
                 id="activity-standup",
                 label="Regular Standup",
@@ -80,22 +80,22 @@ def _create_boring_graph() -> Graph:
                 type="Activity",
                 source="user-stated",
             ),
-        ],
-        edges=[
+        ),
+        edges=(
             Edge(
                 source_id="activity-standup",
                 target_id="timeslot-monday",
                 relationship="SCHEDULED_AT",
                 confidence=0.90,
             ),
-        ],
+        ),
     )
 
 
 def _create_unicode_graph() -> Graph:
     """Create a Unicode graph matching maya_edge_cases scenario."""
     return Graph(
-        nodes=[
+        nodes=(
             Node(
                 id="person-maria",
                 label="María ☕",
@@ -108,15 +108,15 @@ def _create_unicode_graph() -> Graph:
                 type="Activity",
                 source="user-stated",
             ),
-        ],
-        edges=[
+        ),
+        edges=(
             Edge(
                 source_id="activity-coffee",
                 target_id="person-maria",
                 relationship="INVOLVES",
                 confidence=0.85,
             ),
-        ],
+        ),
     )
 
 

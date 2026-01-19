@@ -154,7 +154,7 @@ def test_mock_engine_mutate_returns_new_graph(mock_engine) -> None:
     from sentinel.core.types import Correction, Graph, Node
 
     node = Node(id="n1", label="Test", type="Person", source="ai-inferred", metadata={})
-    graph = Graph(nodes=[node], edges=[])
+    graph = Graph(nodes=(node,), edges=())
     correction = Correction(node_id="n1", action="delete", new_value=None)
 
     result = mock_engine.mutate(graph, correction)
@@ -168,7 +168,7 @@ def test_mock_engine_persist_does_not_raise(mock_engine) -> None:
     """MockEngine.persist should complete without error."""
     from sentinel.core.types import Graph
 
-    graph = Graph(nodes=[], edges=[])
+    graph = Graph(nodes=(), edges=())
 
     # Should not raise
     mock_engine.persist(graph)

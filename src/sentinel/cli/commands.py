@@ -11,7 +11,8 @@ from rich.status import Status
 from sentinel import __version__
 from sentinel.core.constants import EXIT_INTERNAL_ERROR, EXIT_SUCCESS, EXIT_USER_ERROR
 from sentinel.core.engine import CogneeEngine
-from sentinel.core.exceptions import IngestionError
+from sentinel.core.exceptions import IngestionError, PersistenceError
+from sentinel.core.persistence import get_graph_db_path
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -67,10 +68,20 @@ def paste() -> None:
         console.print(f"[green]✓[/green] Extracted {len(graph.nodes)} entities")
         console.print(f"[dim]Found {len(graph.edges)} relationships.[/dim]")
 
-        # TODO: Story 1.4 will persist the graph
+        # Persist the graph (Story 1.4)
+        with Status("[bold blue]Saving knowledge graph...[/bold blue]", console=console):
+            engine.persist(graph)
+
+        db_path = get_graph_db_path()
+        console.print(f"[green]✓[/green] Graph saved to {db_path}")
 
         raise SystemExit(EXIT_SUCCESS)
 
+    except PersistenceError as e:
+        # Handle persistence failures (Story 1.4)
+        logger.exception("Persistence failed")
+        error_console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
     except IngestionError as e:
         # Handle Cognee API failures (AC #6)
         logger.exception("Ingestion failed")
