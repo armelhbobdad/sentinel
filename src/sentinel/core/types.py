@@ -54,12 +54,12 @@ class Graph:
     """A knowledge graph containing nodes and edges.
 
     Attributes:
-        nodes: List of nodes in the graph.
-        edges: List of edges connecting nodes.
+        nodes: Immutable sequence of nodes in the graph.
+        edges: Immutable sequence of edges connecting nodes.
     """
 
-    nodes: list[Node] = field(default_factory=list)
-    edges: list[Edge] = field(default_factory=list)
+    nodes: tuple[Node, ...] = field(default_factory=tuple)
+    edges: tuple[Edge, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)

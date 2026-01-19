@@ -58,7 +58,7 @@ def test_graph_dataclass_has_nodes_and_edges() -> None:
     node2 = Node(id="2", label="Activity B", type="Activity", source="ai-inferred", metadata={})
     edge = Edge(source_id="1", target_id="2", relationship="INVOLVES", confidence=0.9, metadata={})
 
-    graph = Graph(nodes=[node1, node2], edges=[edge])
+    graph = Graph(nodes=(node1, node2), edges=(edge,))
 
     assert len(graph.nodes) == 2, f"Expected 2 nodes, got {len(graph.nodes)}"
     assert len(graph.edges) == 1, f"Expected 1 edge, got {len(graph.edges)}"
@@ -70,10 +70,10 @@ def test_graph_empty_by_default() -> None:
     """Graph should support empty initialization."""
     from sentinel.core.types import Graph
 
-    graph = Graph(nodes=[], edges=[])
+    graph = Graph(nodes=(), edges=())
 
-    assert graph.nodes == [], f"Expected empty nodes list, got {graph.nodes}"
-    assert graph.edges == [], f"Expected empty edges list, got {graph.edges}"
+    assert graph.nodes == (), f"Expected empty nodes tuple, got {graph.nodes}"
+    assert graph.edges == (), f"Expected empty edges tuple, got {graph.edges}"
 
 
 def test_scored_collision_dataclass_has_required_fields() -> None:
