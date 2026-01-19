@@ -88,7 +88,9 @@ def paste() -> None:
             ascii_output = render_ascii(graph)
 
         console.print("[bold]Knowledge Graph:[/bold]")
-        console.print(ascii_output)
+        # Use markup=False to prevent Rich from interpreting [label] as style tags
+        # Our node labels use [label] for user-stated nodes
+        console.print(ascii_output, markup=False)
 
         # Add legend explaining node styling
         console.print()

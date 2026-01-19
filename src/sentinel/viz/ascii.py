@@ -115,11 +115,10 @@ def render_ascii(graph: Graph) -> str:
     try:
         parts: list[str] = []
 
-        # Warn about large graphs
+        # Warn about large graphs (plain text, no Rich markup - output uses markup=False)
         if len(graph.nodes) > MAX_NODES_FOR_FULL_RENDER:
             parts.append(
-                f"[yellow]Large graph detected ({len(graph.nodes)} nodes). "
-                f"Showing summary view.[/yellow]"
+                f"⚠ Large graph detected ({len(graph.nodes)} nodes). Showing summary view."
             )
             parts.append("")
 
@@ -141,4 +140,4 @@ def render_ascii(graph: Graph) -> str:
 
     except Exception as e:
         logger.warning("Visualization failed: %s", e)
-        return "[yellow]Could not render graph visualization.[/yellow]"
+        return "⚠ Could not render graph visualization."

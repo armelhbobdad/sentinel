@@ -73,34 +73,54 @@ RELATION_TYPE_MAP: dict[str, str] = {
     "with": "INVOLVES",
     "has_participant": "INVOLVES",
     "includes": "INVOLVES",
+    "contains": "INVOLVES",  # Cognee uses 'contains' for entity relationships
+    "has": "INVOLVES",
+    "attended_by": "INVOLVES",
+    "organized_by": "INVOLVES",
     # SCHEDULED_AT mappings
     "scheduled_at": "SCHEDULED_AT",
     "at_time": "SCHEDULED_AT",
     "when": "SCHEDULED_AT",
     "occurs_at": "SCHEDULED_AT",
     "on_date": "SCHEDULED_AT",
+    "scheduled_on": "SCHEDULED_AT",
+    "takes_place": "SCHEDULED_AT",
+    "happens_on": "SCHEDULED_AT",
+    "at": "SCHEDULED_AT",
+    "on": "SCHEDULED_AT",
     # DRAINS mappings
     "drains": "DRAINS",
     "depletes": "DRAINS",
     "exhausts": "DRAINS",
     "tires": "DRAINS",
     "fatigues": "DRAINS",
+    "causes_fatigue": "DRAINS",
+    "energy_drain": "DRAINS",
     # REQUIRES mappings
     "requires": "REQUIRES",
     "needs": "REQUIRES",
     "demands": "REQUIRES",
     "depends_on": "REQUIRES",
+    "prerequisite": "REQUIRES",
     # CONFLICTS_WITH mappings
     "conflicts": "CONFLICTS_WITH",
     "conflicts_with": "CONFLICTS_WITH",
     "contradicts": "CONFLICTS_WITH",
     "opposes": "CONFLICTS_WITH",
     "clashes": "CONFLICTS_WITH",
+    "overlaps": "CONFLICTS_WITH",
     # BELONGS_TO mappings
     "belongs_to": "BELONGS_TO",
     "category": "BELONGS_TO",
     "domain": "BELONGS_TO",
     "part_of": "BELONGS_TO",
+    "is_a": "BELONGS_TO",
+    "type_of": "BELONGS_TO",
+    "instance_of": "BELONGS_TO",
+    # Additional Cognee relation types (discovered from live testing)
+    "has_note": "INVOLVES",  # Event has a note about context/feelings
+    "about": "INVOLVES",  # Relation is about a topic
+    "involves_person": "INVOLVES",  # Event involves a person
 }
 
 # Default confidence when Cognee doesn't provide one
@@ -369,20 +389,252 @@ class CogneeEngine:
             # Process with cognify (extracts entities + relationships)
             await cognee.cognify()
 
-            # Query the graph for entities and relationships
-            results = await cognee.search(
-                query_text="*",  # Get all entities
-                query_type=SearchType.GRAPH_COMPLETION,
+            # Query the graph for entities and relationships using Cypher
+            # Get all nodes
+            node_results = await cognee.search(
+                query_text="MATCH (n) RETURN n",
+                query_type=SearchType.CYPHER,
+            )
+
+            # Get all edges
+            edge_results = await cognee.search(
+                query_text="MATCH (a)-[r]->(b) RETURN a, r, b",
+                query_type=SearchType.CYPHER,
             )
 
             # Transform Cognee results to Sentinel types
-            return self._transform_cognee_results(results, text)
+            return self._transform_cypher_results(node_results, edge_results, text)
 
         except IngestionError:
             raise
         except Exception as e:
             logger.exception("Cognee API call failed")
             raise IngestionError(f"Failed to process schedule: {e}") from e
+
+    def _transform_cypher_results(self, node_results: Any, edge_results: Any, text: str) -> Graph:
+        """Transform Cognee Cypher results into a Sentinel Graph.
+
+        Args:
+            node_results: Raw node results from Cypher query.
+            edge_results: Raw edge results from Cypher query.
+            text: Original input text for source determination.
+
+        Returns:
+            Graph with mapped nodes and edges.
+        """
+        nodes: list[Node] = []
+        edges: list[Edge] = []
+        seen_node_ids: set[str] = set()
+        node_id_map: dict[str, str] = {}  # Map Cognee IDs to Sentinel IDs
+
+        # Extract entities from Cypher node results
+        entities = self._extract_entities_from_cypher(node_results)
+
+        # Process entities (only Entity type, not DocumentChunk/EntityType/etc.)
+        for entity in entities:
+            node = _map_cognee_entity_to_node(entity, text)
+            if node.id not in seen_node_ids:
+                nodes.append(node)
+                seen_node_ids.add(node.id)
+                # Map original Cognee ID to our generated ID
+                cognee_id = entity.get("id", "")
+                if cognee_id:
+                    node_id_map[cognee_id] = node.id
+
+        # Extract relations from Cypher edge results
+        relations = self._extract_relations_from_cypher(edge_results, node_id_map)
+
+        # Process relations
+        for relation in relations:
+            edge = _map_cognee_relation_to_edge(relation)
+            if edge is not None:
+                edges.append(edge)
+
+        # Filter to only valid edge types
+        valid_edges = _filter_valid_edges(edges)
+
+        # Validate all edges reference existing nodes
+        valid_edges = self._validate_edge_references(valid_edges, seen_node_ids)
+
+        return Graph(nodes=tuple(nodes), edges=tuple(valid_edges))
+
+    def _extract_entities_from_cypher(self, results: Any) -> list[dict[str, Any]]:
+        """Extract Entity nodes from Cypher MATCH (n) RETURN n results.
+
+        Filters for only 'Entity' type nodes, excluding DocumentChunk,
+        EntityType, TextDocument, TextSummary, etc.
+
+        Args:
+            results: Raw Cypher results.
+
+        Returns:
+            List of entity dictionaries with 'id', 'label', 'type'.
+        """
+        entities: list[dict[str, Any]] = []
+
+        if not results or not isinstance(results, list):
+            return entities
+
+        # Results format: [{'search_result': [[[node1], [node2], ...]], ...}]
+        for result_item in results:
+            if not isinstance(result_item, dict):
+                continue
+
+            search_result = result_item.get("search_result", [])
+            if not search_result or not isinstance(search_result, list):
+                continue
+
+            # search_result[0] is a list of node wrappers
+            node_list = search_result[0] if search_result else []
+
+            for node_wrapper in node_list:
+                # Each node_wrapper is a list with the node dict inside
+                if isinstance(node_wrapper, list) and len(node_wrapper) > 0:
+                    node = node_wrapper[0]
+                elif isinstance(node_wrapper, dict):
+                    node = node_wrapper
+                else:
+                    continue
+
+                if not isinstance(node, dict):
+                    continue
+
+                node_type = node.get("type", "")
+
+                # Only process Entity nodes (not DocumentChunk, EntityType, etc.)
+                if node_type != "Entity":
+                    continue
+
+                # Parse properties if it's a JSON string
+                properties = node.get("properties", {})
+                if isinstance(properties, str):
+                    try:
+                        properties = json.loads(properties)
+                    except (json.JSONDecodeError, TypeError):
+                        properties = {}
+
+                # Map to our expected format
+                entity = {
+                    "id": node.get("id", ""),
+                    "label": node.get("name", ""),
+                    "type": self._infer_entity_type(node),
+                    "metadata": properties,
+                }
+
+                if entity["id"] and entity["label"]:
+                    entities.append(entity)
+
+        return entities
+
+    def _infer_entity_type(self, node: dict[str, Any]) -> str:
+        """Infer Sentinel entity type from Cognee node properties.
+
+        Args:
+            node: Cognee node dict.
+
+        Returns:
+            Sentinel entity type string.
+        """
+        name = node.get("name", "").lower()
+        properties = node.get("properties", {})
+
+        # Try to parse properties JSON for description
+        description = ""
+        if isinstance(properties, str):
+            try:
+                props = json.loads(properties)
+                description = props.get("description", "").lower()
+            except (json.JSONDecodeError, TypeError):
+                pass
+        elif isinstance(properties, dict):
+            description = properties.get("description", "").lower()
+
+        # Infer type from name and description
+        # Days of week -> TimeSlot
+        days = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+        if name in days or "day of week" in description:
+            return "DATE"
+
+        # Times -> TimeSlot
+        if any(t in name for t in ["am", "pm", ":"]) or "time" in description:
+            return "TIME"
+
+        # People detection
+        person_keywords = ["person", "aunt", "uncle", "relative", "colleague", "friend"]
+        if any(kw in name or kw in description for kw in person_keywords):
+            return "PERSON"
+
+        # Events/activities
+        event_keywords = ["dinner", "meeting", "presentation", "workout", "session"]
+        if any(kw in name or kw in description for kw in event_keywords):
+            return "EVENT"
+
+        # Default to Activity
+        return "ACTIVITY"
+
+    def _extract_relations_from_cypher(
+        self, results: Any, node_id_map: dict[str, str]
+    ) -> list[dict[str, Any]]:
+        """Extract relations from Cypher MATCH (a)-[r]->(b) RETURN a, r, b results.
+
+        Args:
+            results: Raw Cypher edge results.
+            node_id_map: Map of Cognee node IDs to Sentinel node IDs.
+
+        Returns:
+            List of relation dictionaries.
+        """
+        relations: list[dict[str, Any]] = []
+
+        if not results or not isinstance(results, list):
+            return relations
+
+        for result_item in results:
+            if not isinstance(result_item, dict):
+                continue
+
+            search_result = result_item.get("search_result", [])
+            if not search_result or not isinstance(search_result, list):
+                continue
+
+            # search_result[0] contains list of [source, edge, target] triples
+            edge_list = search_result[0] if search_result else []
+
+            for edge_triple in edge_list:
+                if not isinstance(edge_triple, list) or len(edge_triple) < 3:
+                    continue
+
+                source_node = edge_triple[0]
+                edge_data = edge_triple[1]
+                target_node = edge_triple[2]
+
+                if not all(isinstance(x, dict) for x in [source_node, edge_data, target_node]):
+                    continue
+
+                # Only process edges between Entity nodes
+                if source_node.get("type") != "Entity" or target_node.get("type") != "Entity":
+                    continue
+
+                source_cognee_id = source_node.get("id", "")
+                target_cognee_id = target_node.get("id", "")
+
+                # Skip if we don't have these nodes mapped
+                if source_cognee_id not in node_id_map or target_cognee_id not in node_id_map:
+                    continue
+
+                # Get relationship type
+                rel_name = edge_data.get("relationship_name", "")
+
+                relation = {
+                    "source_id": node_id_map[source_cognee_id],
+                    "target_id": node_id_map[target_cognee_id],
+                    "type": rel_name,
+                    "confidence": DEFAULT_CONFIDENCE,
+                }
+
+                relations.append(relation)
+
+        return relations
 
     def _transform_cognee_results(self, results: Any, text: str) -> Graph:
         """Transform Cognee search results into a Sentinel Graph.
