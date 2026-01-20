@@ -483,6 +483,652 @@ class TestScoreCollision:
         assert isinstance(result.path, tuple), f"path should be tuple, got {type(result.path)}"
 
 
+class TestClassifyDomain:
+    """Tests for classify_domain function (Story 2.2)."""
+
+    def test_classify_domain_person_family_returns_social(self) -> None:
+        """classify_domain should return SOCIAL for family members."""
+        from sentinel.core.rules import classify_domain
+        from sentinel.core.types import Domain, Node
+
+        node = Node(
+            id="person-aunt-susan",
+            label="Aunt Susan",
+            type="Person",
+            source="user-stated",
+            metadata={"relationship": "family"},
+        )
+
+        result = classify_domain(node)
+
+        assert result == Domain.SOCIAL, f"Expected SOCIAL, got {result}"
+
+    def test_classify_domain_activity_dinner_returns_social(self) -> None:
+        """classify_domain should return SOCIAL for dinner activities."""
+        from sentinel.core.rules import classify_domain
+        from sentinel.core.types import Domain, Node
+
+        node = Node(
+            id="activity-dinner",
+            label="Dinner with Aunt Susan",
+            type="Activity",
+            source="user-stated",
+            metadata={},
+        )
+
+        result = classify_domain(node)
+
+        assert result == Domain.SOCIAL, f"Expected SOCIAL, got {result}"
+
+    def test_classify_domain_activity_presentation_returns_professional(self) -> None:
+        """classify_domain should return PROFESSIONAL for work activities."""
+        from sentinel.core.rules import classify_domain
+        from sentinel.core.types import Domain, Node
+
+        node = Node(
+            id="activity-presentation",
+            label="Strategy Presentation",
+            type="Activity",
+            source="user-stated",
+            metadata={},
+        )
+
+        result = classify_domain(node)
+
+        assert result == Domain.PROFESSIONAL, f"Expected PROFESSIONAL, got {result}"
+
+    def test_classify_domain_activity_meeting_returns_professional(self) -> None:
+        """classify_domain should return PROFESSIONAL for meeting activities."""
+        from sentinel.core.rules import classify_domain
+        from sentinel.core.types import Domain, Node
+
+        node = Node(
+            id="activity-meeting",
+            label="Client Meeting",
+            type="Activity",
+            source="user-stated",
+            metadata={},
+        )
+
+        result = classify_domain(node)
+
+        assert result == Domain.PROFESSIONAL, f"Expected PROFESSIONAL, got {result}"
+
+    def test_classify_domain_activity_workout_returns_health(self) -> None:
+        """classify_domain should return HEALTH for workout activities."""
+        from sentinel.core.rules import classify_domain
+        from sentinel.core.types import Domain, Node
+
+        node = Node(
+            id="activity-workout",
+            label="Morning HIIT Workout",
+            type="Activity",
+            source="user-stated",
+            metadata={},
+        )
+
+        result = classify_domain(node)
+
+        assert result == Domain.HEALTH, f"Expected HEALTH, got {result}"
+
+    def test_classify_domain_ambiguous_returns_personal(self) -> None:
+        """classify_domain should return PERSONAL for ambiguous nodes."""
+        from sentinel.core.rules import classify_domain
+        from sentinel.core.types import Domain, Node
+
+        node = Node(
+            id="activity-unknown",
+            label="Something Random",
+            type="Activity",
+            source="user-stated",
+            metadata={},
+        )
+
+        result = classify_domain(node)
+
+        assert result == Domain.PERSONAL, f"Expected PERSONAL, got {result}"
+
+    def test_classify_domain_energystate_returns_personal(self) -> None:
+        """classify_domain should return PERSONAL for EnergyState nodes."""
+        from sentinel.core.rules import classify_domain
+        from sentinel.core.types import Domain, Node
+
+        node = Node(
+            id="energy-low",
+            label="Low Energy",
+            type="EnergyState",
+            source="ai-inferred",
+            metadata={},
+        )
+
+        result = classify_domain(node)
+
+        assert result == Domain.PERSONAL, f"Expected PERSONAL, got {result}"
+
+    def test_classify_domain_timeslot_returns_personal(self) -> None:
+        """classify_domain should return PERSONAL for TimeSlot nodes."""
+        from sentinel.core.rules import classify_domain
+        from sentinel.core.types import Domain, Node
+
+        node = Node(
+            id="timeslot-monday",
+            label="Monday Morning",
+            type="TimeSlot",
+            source="ai-inferred",
+            metadata={},
+        )
+
+        result = classify_domain(node)
+
+        assert result == Domain.PERSONAL, f"Expected PERSONAL, got {result}"
+
+    def test_classify_domain_person_colleague_returns_professional(self) -> None:
+        """classify_domain should return PROFESSIONAL for work colleagues."""
+        from sentinel.core.rules import classify_domain
+        from sentinel.core.types import Domain, Node
+
+        node = Node(
+            id="person-steve",
+            label="Steve from work",
+            type="Person",
+            source="user-stated",
+            metadata={"context": "colleague"},
+        )
+
+        result = classify_domain(node)
+
+        assert result == Domain.PROFESSIONAL, f"Expected PROFESSIONAL, got {result}"
+
+    def test_classify_domain_uses_metadata_domain_if_present(self) -> None:
+        """classify_domain should use domain from metadata if present."""
+        from sentinel.core.rules import classify_domain
+        from sentinel.core.types import Domain, Node
+
+        node = Node(
+            id="activity-ambiguous",
+            label="Event",
+            type="Activity",
+            source="user-stated",
+            metadata={"domain": "HEALTH"},
+        )
+
+        result = classify_domain(node)
+
+        assert result == Domain.HEALTH, f"Expected HEALTH from metadata, got {result}"
+
+
+class TestIsCrossDomainCollision:
+    """Tests for is_cross_domain_collision function (Story 2.2)."""
+
+    def test_is_cross_domain_collision_social_to_professional_returns_true(self) -> None:
+        """Cross-domain collision from SOCIAL to PROFESSIONAL should return True."""
+        from sentinel.core.rules import is_cross_domain_collision
+        from sentinel.core.types import Domain
+
+        result = is_cross_domain_collision(Domain.SOCIAL, Domain.PROFESSIONAL)
+
+        assert result is True, f"Expected True for SOCIAL→PROFESSIONAL, got {result}"
+
+    def test_is_cross_domain_collision_same_domain_returns_false(self) -> None:
+        """Same domain collision should return False."""
+        from sentinel.core.rules import is_cross_domain_collision
+        from sentinel.core.types import Domain
+
+        result = is_cross_domain_collision(Domain.PROFESSIONAL, Domain.PROFESSIONAL)
+
+        assert result is False, f"Expected False for same domain, got {result}"
+
+    def test_is_cross_domain_collision_personal_to_professional_returns_true(self) -> None:
+        """Cross-domain collision from PERSONAL to PROFESSIONAL should return True."""
+        from sentinel.core.rules import is_cross_domain_collision
+        from sentinel.core.types import Domain
+
+        result = is_cross_domain_collision(Domain.PERSONAL, Domain.PROFESSIONAL)
+
+        assert result is True, f"Expected True for PERSONAL→PROFESSIONAL, got {result}"
+
+    def test_is_cross_domain_collision_social_to_health_returns_true(self) -> None:
+        """Cross-domain collision from SOCIAL to HEALTH should return True."""
+        from sentinel.core.rules import is_cross_domain_collision
+        from sentinel.core.types import Domain
+
+        result = is_cross_domain_collision(Domain.SOCIAL, Domain.HEALTH)
+
+        assert result is True, f"Expected True for SOCIAL→HEALTH, got {result}"
+
+    def test_is_cross_domain_collision_health_to_health_returns_false(self) -> None:
+        """Same HEALTH domain should return False."""
+        from sentinel.core.rules import is_cross_domain_collision
+        from sentinel.core.types import Domain
+
+        result = is_cross_domain_collision(Domain.HEALTH, Domain.HEALTH)
+
+        assert result is False, f"Expected False for HEALTH→HEALTH, got {result}"
+
+
+class TestDetectCrossDomainCollisions:
+    """Tests for detect_cross_domain_collisions function (Story 2.2)."""
+
+    def test_detect_cross_domain_collisions_finds_social_to_professional(self) -> None:
+        """Should detect collision crossing from SOCIAL to PROFESSIONAL domain."""
+        from sentinel.core.rules import detect_cross_domain_collisions
+        from sentinel.core.types import Edge, Graph, Node
+
+        nodes = (
+            Node(
+                id="person-aunt-susan",
+                label="Aunt Susan",
+                type="Person",
+                source="user-stated",
+            ),
+            Node(
+                id="energy-drained",
+                label="drained",
+                type="EnergyState",
+                source="ai-inferred",
+            ),
+            Node(
+                id="energy-focused",
+                label="focused",
+                type="EnergyState",
+                source="ai-inferred",
+            ),
+            Node(
+                id="activity-presentation",
+                label="Strategy Presentation",
+                type="Activity",
+                source="user-stated",
+            ),
+        )
+        edges = (
+            Edge(
+                source_id="person-aunt-susan",
+                target_id="energy-drained",
+                relationship="DRAINS",
+                confidence=0.85,
+            ),
+            Edge(
+                source_id="energy-drained",
+                target_id="energy-focused",
+                relationship="CONFLICTS_WITH",
+                confidence=0.80,
+            ),
+            Edge(
+                source_id="activity-presentation",
+                target_id="energy-focused",
+                relationship="REQUIRES",
+                confidence=0.90,
+            ),
+        )
+        graph = Graph(nodes=nodes, edges=edges)
+
+        collisions = detect_cross_domain_collisions(graph)
+
+        assert len(collisions) >= 1, f"Expected at least 1 collision, got {len(collisions)}"
+        # Verify it's marked as cross-domain via enhanced path labels
+        assert any("[SOCIAL]" in str(c.path) for c in collisions), (
+            "Should have SOCIAL domain label in path"
+        )
+
+    def test_detect_cross_domain_collisions_empty_graph_returns_empty(self) -> None:
+        """Should return empty list for empty graph."""
+        from sentinel.core.rules import detect_cross_domain_collisions
+        from sentinel.core.types import Graph
+
+        graph = Graph(nodes=(), edges=())
+
+        collisions = detect_cross_domain_collisions(graph)
+
+        assert collisions == [], f"Expected empty list, got {collisions}"
+
+    def test_detect_cross_domain_collisions_no_drains_returns_empty(self) -> None:
+        """Should return empty list when no DRAINS edges exist."""
+        from sentinel.core.rules import detect_cross_domain_collisions
+        from sentinel.core.types import Edge, Graph, Node
+
+        nodes = (
+            Node(id="a", label="A", type="Activity", source="user-stated"),
+            Node(id="b", label="B", type="Activity", source="user-stated"),
+        )
+        edges = (Edge(source_id="a", target_id="b", relationship="INVOLVES", confidence=0.8),)
+        graph = Graph(nodes=nodes, edges=edges)
+
+        collisions = detect_cross_domain_collisions(graph)
+
+        assert collisions == [], f"Expected empty list, got {collisions}"
+
+
+class TestEnhancedPatternMatching:
+    """Tests for enhanced collision pattern matching (Story 2.2 Task 3)."""
+
+    def test_matches_collision_pattern_validates_edge_sequence(self) -> None:
+        """Pattern should validate DRAINS → CONFLICTS_WITH → REQUIRES sequence."""
+        from sentinel.core.rules import CollisionPath
+        from sentinel.core.types import Edge
+
+        # Valid sequence
+        edges = (
+            Edge(source_id="person", target_id="drained", relationship="DRAINS", confidence=0.8),
+            Edge(
+                source_id="drained",
+                target_id="focused",
+                relationship="CONFLICTS_WITH",
+                confidence=0.7,
+            ),
+            Edge(
+                source_id="activity", target_id="focused", relationship="REQUIRES", confidence=0.9
+            ),
+        )
+        path = CollisionPath(edges=edges)
+
+        assert path.matches_collision_pattern() is True, "Valid sequence should match"
+
+    def test_matches_collision_pattern_wrong_order_still_matches(self) -> None:
+        """Pattern with all relations but different order should still match.
+
+        Note: Story 2.1 pattern matching checks presence, not order.
+        Order validation is handled by traversal starting from DRAINS.
+        """
+        from sentinel.core.rules import CollisionPath
+        from sentinel.core.types import Edge
+
+        # All relations present but different order
+        edges = (
+            Edge(
+                source_id="activity", target_id="focused", relationship="REQUIRES", confidence=0.9
+            ),
+            Edge(
+                source_id="drained",
+                target_id="focused",
+                relationship="CONFLICTS_WITH",
+                confidence=0.7,
+            ),
+            Edge(source_id="person", target_id="drained", relationship="DRAINS", confidence=0.8),
+        )
+        path = CollisionPath(edges=edges)
+
+        # matches_collision_pattern() checks presence, not strict order
+        assert path.matches_collision_pattern() is True, "All relations present should match"
+
+
+class TestScoreCollisionWithDomains:
+    """Tests for score_collision_with_domains function (Story 2.2 Task 4)."""
+
+    def test_score_collision_with_domains_adds_domain_labels(self) -> None:
+        """Should add domain labels to path for display."""
+        from sentinel.core.rules import CollisionPath, score_collision_with_domains
+        from sentinel.core.types import Edge, Graph, Node
+
+        nodes = (
+            Node(id="aunt", label="Aunt Susan", type="Person", source="user-stated"),
+            Node(id="drained", label="drained", type="EnergyState", source="ai-inferred"),
+            Node(id="focused", label="focused", type="EnergyState", source="ai-inferred"),
+            Node(
+                id="presentation",
+                label="Strategy Presentation",
+                type="Activity",
+                source="user-stated",
+            ),
+        )
+        edges = (
+            Edge(source_id="aunt", target_id="drained", relationship="DRAINS", confidence=0.8),
+            Edge(
+                source_id="drained",
+                target_id="focused",
+                relationship="CONFLICTS_WITH",
+                confidence=0.7,
+            ),
+            Edge(
+                source_id="presentation",
+                target_id="focused",
+                relationship="REQUIRES",
+                confidence=0.9,
+            ),
+        )
+        graph = Graph(nodes=nodes, edges=edges)
+        path = CollisionPath(edges=edges)
+
+        result = score_collision_with_domains(path, graph)
+
+        # First element should have SOCIAL label (source of DRAINS)
+        assert "[SOCIAL]" in result.path[0], (
+            f"Expected SOCIAL label in first element: {result.path}"
+        )
+        # PROFESSIONAL label should be on the activity that REQUIRES energy
+        # This may not be the last element (which is the energy state)
+        assert any("[PROFESSIONAL]" in str(label) for label in result.path), (
+            f"Expected PROFESSIONAL label somewhere in path: {result.path}"
+        )
+
+    def test_score_collision_with_domains_boosts_cross_domain_confidence(self) -> None:
+        """Should boost confidence for cross-domain collisions."""
+        from sentinel.core.rules import (
+            CollisionPath,
+            score_collision,
+            score_collision_with_domains,
+        )
+        from sentinel.core.types import Edge, Graph, Node
+
+        nodes = (
+            Node(id="aunt", label="Aunt Susan", type="Person", source="user-stated"),
+            Node(id="drained", label="drained", type="EnergyState", source="ai-inferred"),
+            Node(id="focused", label="focused", type="EnergyState", source="ai-inferred"),
+            Node(
+                id="presentation",
+                label="Strategy Presentation",
+                type="Activity",
+                source="user-stated",
+            ),
+        )
+        edges = (
+            Edge(source_id="aunt", target_id="drained", relationship="DRAINS", confidence=0.8),
+            Edge(
+                source_id="drained",
+                target_id="focused",
+                relationship="CONFLICTS_WITH",
+                confidence=0.7,
+            ),
+            Edge(
+                source_id="presentation",
+                target_id="focused",
+                relationship="REQUIRES",
+                confidence=0.9,
+            ),
+        )
+        graph = Graph(nodes=nodes, edges=edges)
+        path = CollisionPath(edges=edges)
+
+        base_result = score_collision(path, graph)
+        enhanced_result = score_collision_with_domains(path, graph)
+
+        # Cross-domain should have higher confidence (10% boost)
+        assert enhanced_result.confidence > base_result.confidence, (
+            f"Cross-domain {enhanced_result.confidence} should exceed base {base_result.confidence}"
+        )
+
+    def test_score_collision_with_domains_preserves_source_breakdown(self) -> None:
+        """Should preserve source breakdown from base scoring."""
+        from sentinel.core.rules import CollisionPath, score_collision_with_domains
+        from sentinel.core.types import Edge, Graph, Node
+
+        nodes = (
+            Node(id="aunt", label="Aunt Susan", type="Person", source="user-stated"),
+            Node(id="drained", label="drained", type="EnergyState", source="ai-inferred"),
+            Node(id="focused", label="focused", type="EnergyState", source="ai-inferred"),
+            Node(
+                id="presentation",
+                label="Strategy Presentation",
+                type="Activity",
+                source="user-stated",
+            ),
+        )
+        edges = (
+            Edge(source_id="aunt", target_id="drained", relationship="DRAINS", confidence=0.8),
+            Edge(
+                source_id="drained",
+                target_id="focused",
+                relationship="CONFLICTS_WITH",
+                confidence=0.7,
+            ),
+            Edge(
+                source_id="presentation",
+                target_id="focused",
+                relationship="REQUIRES",
+                confidence=0.9,
+            ),
+        )
+        graph = Graph(nodes=nodes, edges=edges)
+        path = CollisionPath(edges=edges)
+
+        result = score_collision_with_domains(path, graph)
+
+        assert "ai_inferred" in result.source_breakdown, "Should have ai_inferred count"
+        assert "user_stated" in result.source_breakdown, "Should have user_stated count"
+
+
+class TestIsValidCollision:
+    """Tests for is_valid_collision function (Story 2.2 Task 5)."""
+
+    def test_is_valid_collision_returns_true_for_valid_path(self) -> None:
+        """Should return True for valid collision path."""
+        from sentinel.core.rules import CollisionPath, is_valid_collision
+        from sentinel.core.types import Edge, Graph, Node
+
+        nodes = (
+            Node(id="person", label="Aunt", type="Person", source="user-stated"),
+            Node(id="drained", label="drained", type="EnergyState", source="ai-inferred"),
+            Node(id="focused", label="focused", type="EnergyState", source="ai-inferred"),
+            Node(id="activity", label="Presentation", type="Activity", source="user-stated"),
+        )
+        edges = (
+            Edge(source_id="person", target_id="drained", relationship="DRAINS", confidence=0.8),
+            Edge(
+                source_id="drained",
+                target_id="focused",
+                relationship="CONFLICTS_WITH",
+                confidence=0.7,
+            ),
+            Edge(
+                source_id="activity", target_id="focused", relationship="REQUIRES", confidence=0.9
+            ),
+        )
+        graph = Graph(nodes=nodes, edges=edges)
+        path = CollisionPath(edges=edges)
+
+        result = is_valid_collision(path, graph)
+
+        assert result is True, f"Expected True for valid path, got {result}"
+
+    def test_is_valid_collision_returns_false_for_short_path(self) -> None:
+        """Should return False for path with fewer than 3 edges."""
+        from sentinel.core.rules import CollisionPath, is_valid_collision
+        from sentinel.core.types import Edge, Graph, Node
+
+        nodes = (
+            Node(id="a", label="A", type="Person", source="user-stated"),
+            Node(id="b", label="B", type="EnergyState", source="ai-inferred"),
+        )
+        edges = (
+            Edge(source_id="a", target_id="b", relationship="DRAINS", confidence=0.8),
+            Edge(source_id="b", target_id="a", relationship="CONFLICTS_WITH", confidence=0.7),
+        )
+        graph = Graph(nodes=nodes, edges=edges)
+        path = CollisionPath(edges=edges)
+
+        result = is_valid_collision(path, graph)
+
+        assert result is False, f"Expected False for short path, got {result}"
+
+    def test_is_valid_collision_returns_false_for_missing_pattern(self) -> None:
+        """Should return False for path missing collision pattern."""
+        from sentinel.core.rules import CollisionPath, is_valid_collision
+        from sentinel.core.types import Edge, Graph, Node
+
+        nodes = (
+            Node(id="a", label="A", type="Activity", source="user-stated"),
+            Node(id="b", label="B", type="Activity", source="user-stated"),
+            Node(id="c", label="C", type="Activity", source="user-stated"),
+        )
+        edges = (
+            Edge(source_id="a", target_id="b", relationship="INVOLVES", confidence=0.8),
+            Edge(source_id="b", target_id="c", relationship="SCHEDULED_AT", confidence=0.7),
+            Edge(source_id="c", target_id="a", relationship="BELONGS_TO", confidence=0.9),
+        )
+        graph = Graph(nodes=nodes, edges=edges)
+        path = CollisionPath(edges=edges)
+
+        result = is_valid_collision(path, graph)
+
+        assert result is False, f"Expected False for missing pattern, got {result}"
+
+    def test_is_valid_collision_returns_false_for_same_start_end(self) -> None:
+        """Should return False for self-loop (same start and end node)."""
+        from sentinel.core.rules import CollisionPath, is_valid_collision
+        from sentinel.core.types import Edge, Graph, Node
+
+        nodes = (
+            Node(id="a", label="A", type="Person", source="user-stated"),
+            Node(id="b", label="B", type="EnergyState", source="ai-inferred"),
+            Node(id="c", label="C", type="EnergyState", source="ai-inferred"),
+        )
+        # Path that loops back: a -> b -> c -> a
+        edges = (
+            Edge(source_id="a", target_id="b", relationship="DRAINS", confidence=0.8),
+            Edge(source_id="b", target_id="c", relationship="CONFLICTS_WITH", confidence=0.7),
+            Edge(source_id="c", target_id="a", relationship="REQUIRES", confidence=0.9),
+        )
+        graph = Graph(nodes=nodes, edges=edges)
+        path = CollisionPath(edges=edges)
+
+        result = is_valid_collision(path, graph)
+
+        assert result is False, f"Expected False for self-loop, got {result}"
+
+
+class TestDeduplicateCollisions:
+    """Tests for collision deduplication (Story 2.2 Task 5)."""
+
+    def test_deduplicate_collisions_removes_duplicates(self) -> None:
+        """Should remove duplicate collision paths."""
+        from sentinel.core.rules import deduplicate_collisions
+        from sentinel.core.types import ScoredCollision
+
+        collisions = [
+            ScoredCollision(path=("A", "DRAINS", "B"), confidence=0.8, source_breakdown={}),
+            ScoredCollision(path=("A", "DRAINS", "B"), confidence=0.8, source_breakdown={}),
+            ScoredCollision(path=("C", "DRAINS", "D"), confidence=0.7, source_breakdown={}),
+        ]
+
+        result = deduplicate_collisions(collisions)
+
+        assert len(result) == 2, f"Expected 2 unique collisions, got {len(result)}"
+
+    def test_deduplicate_collisions_preserves_higher_confidence(self) -> None:
+        """Should keep collision with higher confidence when deduplicating."""
+        from sentinel.core.rules import deduplicate_collisions
+        from sentinel.core.types import ScoredCollision
+
+        collisions = [
+            ScoredCollision(path=("A", "DRAINS", "B"), confidence=0.6, source_breakdown={}),
+            ScoredCollision(path=("A", "DRAINS", "B"), confidence=0.9, source_breakdown={}),
+        ]
+
+        result = deduplicate_collisions(collisions)
+
+        assert len(result) == 1, f"Expected 1 collision, got {len(result)}"
+        assert result[0].confidence == 0.9, (
+            f"Expected highest confidence 0.9, got {result[0].confidence}"
+        )
+
+    def test_deduplicate_collisions_empty_input_returns_empty(self) -> None:
+        """Should return empty list for empty input (edge case)."""
+        from sentinel.core.rules import deduplicate_collisions
+
+        result = deduplicate_collisions([])
+
+        assert result == [], f"Expected empty list, got {result}"
+
+
 class TestTimeoutBehavior:
     """Tests for timeout behavior in async traversal (AC #4)."""
 

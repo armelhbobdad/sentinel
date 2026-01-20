@@ -6,10 +6,24 @@ All types are immutable dataclasses for thread safety and predictability.
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from typing import Any, Literal
 
 # Source types for tracking provenance
 NodeSource = Literal["user-stated", "ai-inferred"]
+
+
+class Domain(Enum):
+    """Life domains for collision classification.
+
+    Used to identify when energy collisions cross life boundaries
+    (e.g., social activities impacting professional requirements).
+    """
+
+    SOCIAL = auto()  # Family, friends, social events
+    PROFESSIONAL = auto()  # Work, meetings, career activities
+    HEALTH = auto()  # Exercise, medical, wellness
+    PERSONAL = auto()  # Default/ambiguous
 
 
 @dataclass(frozen=True)

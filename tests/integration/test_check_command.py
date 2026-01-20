@@ -248,3 +248,195 @@ class TestCheckCommandProgressIndicator:
         assert result.exit_code in (EXIT_SUCCESS, EXIT_COLLISION_DETECTED), (
             f"Unexpected exit code: {result.exit_code}. Output: {result.output}"
         )
+
+
+class TestCrossDomainCollisionDetection:
+    """Integration tests for Story 2.2: Cross-Domain Collision Detection."""
+
+    def test_detect_cross_domain_collision_with_mock_engine(self) -> None:
+        """Test full collision detection flow with MockEngine collision fixture.
+
+        Story 2.2 AC #1: Cross-domain patterns are identified (social → professional conflict)
+        """
+        from sentinel.core.rules import detect_cross_domain_collisions
+
+        # Use collision graph from MockEngine pattern
+        graph = _create_collision_graph()
+
+        collisions = detect_cross_domain_collisions(graph)
+
+        assert len(collisions) >= 1, f"Expected at least 1 collision, got {len(collisions)}"
+
+    def test_collision_path_contains_domain_labels(self) -> None:
+        """Test collision path contains correct domain information.
+
+        Story 2.2 AC #3: Path labels show domain transitions for display.
+        """
+        from sentinel.core.rules import detect_cross_domain_collisions
+
+        # Create graph with clear SOCIAL and PROFESSIONAL nodes
+        nodes = (
+            Node(
+                id="person-aunt-susan",
+                label="Aunt Susan",
+                type="Person",
+                source="user-stated",
+                metadata={},
+            ),
+            Node(
+                id="energystate-drained",
+                label="drained",
+                type="EnergyState",
+                source="ai-inferred",
+                metadata={},
+            ),
+            Node(
+                id="energystate-focused",
+                label="focused",
+                type="EnergyState",
+                source="ai-inferred",
+                metadata={},
+            ),
+            Node(
+                id="activity-presentation",
+                label="Strategy Presentation",
+                type="Activity",
+                source="user-stated",
+                metadata={},
+            ),
+        )
+        edges = (
+            Edge(
+                source_id="person-aunt-susan",
+                target_id="energystate-drained",
+                relationship="DRAINS",
+                confidence=0.85,
+                metadata={},
+            ),
+            Edge(
+                source_id="energystate-drained",
+                target_id="energystate-focused",
+                relationship="CONFLICTS_WITH",
+                confidence=0.80,
+                metadata={},
+            ),
+            Edge(
+                source_id="activity-presentation",
+                target_id="energystate-focused",
+                relationship="REQUIRES",
+                confidence=0.90,
+                metadata={},
+            ),
+        )
+        graph = Graph(nodes=nodes, edges=edges)
+
+        collisions = detect_cross_domain_collisions(graph)
+
+        assert len(collisions) >= 1, "Expected collision to be detected"
+        collision = collisions[0]
+
+        # Check domain labels are present
+        path_str = str(collision.path)
+        assert "[SOCIAL]" in path_str, f"Expected SOCIAL label in path: {path_str}"
+        assert "[PROFESSIONAL]" in path_str, f"Expected PROFESSIONAL label in path: {path_str}"
+
+    def test_no_false_positives_with_unrelated_activities(self) -> None:
+        """Test no false positives are generated for unrelated activities.
+
+        Story 2.2 AC #6: No false positives with unrelated activities.
+        """
+        from sentinel.core.rules import detect_cross_domain_collisions
+
+        # Create graph without collision pattern (no DRAINS edges)
+        graph = _create_no_collision_graph()
+
+        collisions = detect_cross_domain_collisions(graph)
+
+        assert collisions == [], f"Expected no collisions, got {len(collisions)}"
+
+    def test_empty_graph_returns_empty_list_not_none(self) -> None:
+        """Test empty graph returns empty list (not None).
+
+        Story 2.2 AC #5: Empty list returned, not None.
+        """
+        from sentinel.core.rules import detect_cross_domain_collisions
+
+        empty_graph = Graph(nodes=(), edges=())
+
+        collisions = detect_cross_domain_collisions(empty_graph)
+
+        assert collisions == [], (
+            f"Expected empty list, got {type(collisions).__name__}: {collisions}"
+        )
+        assert isinstance(collisions, list), "Return value must be list, not None"
+
+    def test_backward_compatibility_with_story_21_tests(self) -> None:
+        """Test Story 2.1 functionality still works after Story 2.2 changes.
+
+        Verifies find_collision_paths() and score_collision() still function correctly.
+        """
+        from sentinel.core.rules import find_collision_paths, score_collision
+
+        graph = _create_collision_graph()
+
+        # Story 2.1 path finding
+        paths = find_collision_paths(graph)
+        assert len(paths) >= 1, "Story 2.1 path finding should still work"
+
+        # Story 2.1 scoring
+        if paths:
+            collision = score_collision(paths[0], graph)
+            assert collision is not None, "Story 2.1 scoring should still work"
+            assert 0.0 <= collision.confidence <= 1.0, "Confidence should be valid"
+
+    def test_cross_domain_collision_has_boosted_confidence(self) -> None:
+        """Test cross-domain collisions have boosted confidence vs same-domain.
+
+        Story 2.2: Cross-domain collisions are more impactful (10% boost).
+        """
+        from sentinel.core.rules import (
+            find_collision_paths,
+            score_collision,
+            score_collision_with_domains,
+        )
+
+        # Create SOCIAL → PROFESSIONAL collision
+        nodes = (
+            Node(id="aunt", label="Aunt Susan", type="Person", source="user-stated"),
+            Node(id="drained", label="drained", type="EnergyState", source="ai-inferred"),
+            Node(id="focused", label="focused", type="EnergyState", source="ai-inferred"),
+            Node(
+                id="presentation",
+                label="Strategy Presentation",
+                type="Activity",
+                source="user-stated",
+            ),
+        )
+        edges = (
+            Edge(source_id="aunt", target_id="drained", relationship="DRAINS", confidence=0.8),
+            Edge(
+                source_id="drained",
+                target_id="focused",
+                relationship="CONFLICTS_WITH",
+                confidence=0.7,
+            ),
+            Edge(
+                source_id="presentation",
+                target_id="focused",
+                relationship="REQUIRES",
+                confidence=0.9,
+            ),
+        )
+        graph = Graph(nodes=nodes, edges=edges)
+
+        paths = find_collision_paths(graph)
+        assert len(paths) >= 1, "Should find collision path"
+
+        path = paths[0]
+        base = score_collision(path, graph)
+        enhanced = score_collision_with_domains(path, graph)
+
+        # Cross-domain (SOCIAL → PROFESSIONAL) should have boosted confidence
+        assert enhanced.confidence > base.confidence, (
+            f"Cross-domain {enhanced.confidence} should exceed base {base.confidence}"
+        )
