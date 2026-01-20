@@ -190,6 +190,75 @@ async def test_e2e_collision_detection_with_typical_week() -> None:
 
 
 @pytest.mark.asyncio
+async def test_bug002_e2e_collision_detection_with_drains_in_path(
+    collision_scenario_text: str,
+) -> None:
+    """BUG-002 AC #5: E2E test for collision detection with DRAINS edge in path.
+
+    Given: Explicit collision scenario with draining and requiring activities
+    When: sentinel check runs (collision detection)
+    Then: At least one collision is detected with DRAINS edge in path
+    """
+    from sentinel.core.engine import CogneeEngine
+    from sentinel.core.rules import detect_cross_domain_collisions
+
+    # Ingest with real Cognee API
+    engine = CogneeEngine()
+    graph = await engine.ingest(collision_scenario_text)
+
+    print(f"\nGraph extracted: {len(graph.nodes)} nodes, {len(graph.edges)} edges")
+
+    # Document edge types
+    edge_types = {edge.relationship for edge in graph.edges}
+    print(f"Edge types found: {sorted(edge_types)}")
+
+    # Document all edges
+    print("\nAll edges:")
+    for edge in graph.edges:
+        print(f"  {edge.source_id} --[{edge.relationship}]--> {edge.target_id}")
+
+    # Verify DRAINS edges exist (prerequisite for BUG-002 fix validation)
+    drains_edges = [e for e in graph.edges if e.relationship == "DRAINS"]
+    print(f"\nDRAINS edges: {len(drains_edges)}")
+    for edge in drains_edges:
+        print(f"  {edge.source_id} --[DRAINS]--> {edge.target_id}")
+
+    assert len(drains_edges) >= 1, (
+        f"BUG-002 fix validation: Expected at least one DRAINS edge. "
+        f"Edge types found: {sorted(edge_types)}. "
+        "BUG-002 mappings (causes, negatively_impacts, etc.) may not be working."
+    )
+
+    # Run collision detection
+    collisions = detect_cross_domain_collisions(graph)
+
+    print(f"\nCollisions detected: {len(collisions)}")
+    for collision in collisions:
+        print(f"  - Path: {collision.path}")
+        print(f"    Confidence: {collision.confidence:.2f}")
+
+    # AC #5: At least one collision is detected
+    assert len(collisions) >= 1, (
+        f"BUG-002 AC #5: Expected at least 1 collision, got {len(collisions)}. "
+        f"DRAINS edges: {len(drains_edges)}. "
+        "If DRAINS edges exist but no collisions, check CONFLICTS_WITH detection or "
+        "collision algorithm pattern matching."
+    )
+
+    # AC #5: DRAINS edge appears in collision path
+    collision_paths = [c.path for c in collisions]
+    drains_in_path = any("DRAINS" in str(path) for path in collision_paths)
+
+    print(f"\nDRAINS in collision path: {drains_in_path}")
+
+    assert drains_in_path, (
+        f"BUG-002 AC #5: Expected DRAINS edge in collision path. "
+        f"Collision paths: {collision_paths}. "
+        "Collision detection pattern may need DRAINS → CONFLICTS_WITH → REQUIRES."
+    )
+
+
+@pytest.mark.asyncio
 async def test_document_cognee_entity_extraction(collision_scenario_text: str) -> None:
     """Document what entities Cognee extracts from schedule text.
 

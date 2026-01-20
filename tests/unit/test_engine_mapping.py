@@ -692,6 +692,197 @@ class TestBug001MissingRelationTypeMappings:
         assert edge.relationship == "INVOLVES", f"Expected INVOLVES, got {edge.relationship}"
 
 
+class TestBug002AdditionalRelationTypeMappings:
+    """Tests for BUG-002: Additional relation type mappings for DRAINS detection.
+
+    These tests verify that Cognee's LLM-generated semantic relation types
+    discovered during post-BUG-001 E2E validation are properly mapped.
+    """
+
+    # Task 1: DRAINS mappings for causal relations (AC #1, #2)
+    def test_map_causes_relation_to_drains(self) -> None:
+        """Cognee 'causes' should map to DRAINS edge (AC #1)."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "causes",
+            "source_id": "activity-dinner",
+            "target_id": "state-energy-depletion",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "causes should map to valid edge"
+        assert edge.relationship == "DRAINS", f"Expected DRAINS, got {edge.relationship}"
+
+    def test_map_negatively_impacts_relation_to_drains(self) -> None:
+        """Cognee 'negatively_impacts' should map to DRAINS edge (AC #2)."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "negatively_impacts",
+            "source_id": "activity-dinner",
+            "target_id": "state-energy-level",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "negatively_impacts should map to valid edge"
+        assert edge.relationship == "DRAINS", f"Expected DRAINS, got {edge.relationship}"
+
+    def test_map_negatively_affects_relation_to_drains(self) -> None:
+        """Cognee 'negatively_affects' variant should map to DRAINS edge."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "negatively_affects",
+            "source_id": "activity-meeting",
+            "target_id": "state-energy",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "negatively_affects should map to valid edge"
+        assert edge.relationship == "DRAINS", f"Expected DRAINS, got {edge.relationship}"
+
+    def test_map_leads_to_exhaustion_relation_to_drains(self) -> None:
+        """Cognee 'leads_to_exhaustion' variant should map to DRAINS edge."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "leads_to_exhaustion",
+            "source_id": "activity-workout",
+            "target_id": "state-exhaustion",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "leads_to_exhaustion should map to valid edge"
+        assert edge.relationship == "DRAINS", f"Expected DRAINS, got {edge.relationship}"
+
+    def test_map_results_in_fatigue_relation_to_drains(self) -> None:
+        """Cognee 'results_in_fatigue' variant should map to DRAINS edge."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "results_in_fatigue",
+            "source_id": "activity-meeting",
+            "target_id": "state-fatigue",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "results_in_fatigue should map to valid edge"
+        assert edge.relationship == "DRAINS", f"Expected DRAINS, got {edge.relationship}"
+
+    def test_map_impacts_energy_relation_to_drains(self) -> None:
+        """Cognee 'impacts_energy' variant should map to DRAINS edge."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "impacts_energy",
+            "source_id": "activity-commute",
+            "target_id": "state-energy",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "impacts_energy should map to valid edge"
+        assert edge.relationship == "DRAINS", f"Expected DRAINS, got {edge.relationship}"
+
+    # Task 2: SCHEDULED_AT mappings (AC #3)
+    def test_map_occurs_on_relation_to_scheduled_at(self) -> None:
+        """Cognee 'occurs_on' should map to SCHEDULED_AT edge (AC #3)."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "occurs_on",
+            "source_id": "activity-dinner",
+            "target_id": "timeslot-sunday",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "occurs_on should map to valid edge"
+        assert edge.relationship == "SCHEDULED_AT", (
+            f"Expected SCHEDULED_AT, got {edge.relationship}"
+        )
+
+    def test_map_happens_at_relation_to_scheduled_at(self) -> None:
+        """Cognee 'happens_at' variant should map to SCHEDULED_AT edge."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "happens_at",
+            "source_id": "activity-meeting",
+            "target_id": "timeslot-9am",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "happens_at should map to valid edge"
+        assert edge.relationship == "SCHEDULED_AT", (
+            f"Expected SCHEDULED_AT, got {edge.relationship}"
+        )
+
+    # Task 3: INVOLVES mappings (AC #4)
+    def test_map_has_characteristic_relation_to_involves(self) -> None:
+        """Cognee 'has_characteristic' should map to INVOLVES edge (AC #4)."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "has_characteristic",
+            "source_id": "activity-dinner",
+            "target_id": "trait-emotionally-draining",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "has_characteristic should map to valid edge"
+        assert edge.relationship == "INVOLVES", f"Expected INVOLVES, got {edge.relationship}"
+
+    def test_map_characterized_by_relation_to_involves(self) -> None:
+        """Cognee 'characterized_by' variant should map to INVOLVES edge."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "characterized_by",
+            "source_id": "person-aunt-susan",
+            "target_id": "trait-complainy",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "characterized_by should map to valid edge"
+        assert edge.relationship == "INVOLVES", f"Expected INVOLVES, got {edge.relationship}"
+
+    # Regression test: verify BUG-002 mappings didn't break unknown relation filtering
+    def test_unknown_relation_still_returns_none(self) -> None:
+        """Verify BUG-002 mappings didn't break unknown relation filtering."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "completely_unknown_type",
+            "source_id": "a",
+            "target_id": "b",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is None, "Unknown relations should still return None after BUG-002"
+
+
 class TestEdgeReferenceValidation:
     """Tests for edge reference validation (H2 fix)."""
 

@@ -88,6 +88,9 @@ RELATION_TYPE_MAP: dict[str, str] = {
     "happens_on": "SCHEDULED_AT",
     "at": "SCHEDULED_AT",
     "on": "SCHEDULED_AT",
+    # BUG-002: Additional SCHEDULED_AT mappings (AC #3)
+    "occurs_on": "SCHEDULED_AT",
+    "happens_at": "SCHEDULED_AT",
     # DRAINS mappings
     "drains": "DRAINS",
     "depletes": "DRAINS",
@@ -102,6 +105,15 @@ RELATION_TYPE_MAP: dict[str, str] = {
     "emotionally_draining": "DRAINS",
     "causes_exhaustion": "DRAINS",
     "energy_draining": "DRAINS",
+    # BUG-002: Additional DRAINS mappings for causal relations (AC #1, #2)
+    # Note: "causes" is semantically broad but maps to DRAINS in Sentinel's
+    # energy-focused domain when target involves energy/exhaustion concepts.
+    "causes": "DRAINS",
+    "negatively_impacts": "DRAINS",
+    "negatively_affects": "DRAINS",
+    "leads_to_exhaustion": "DRAINS",
+    "results_in_fatigue": "DRAINS",
+    "impacts_energy": "DRAINS",
     # REQUIRES mappings
     "requires": "REQUIRES",
     "needs": "REQUIRES",
@@ -136,6 +148,9 @@ RELATION_TYPE_MAP: dict[str, str] = {
     # BUG-001: Cognee LLM-generated INVOLVES variants
     "attends": "INVOLVES",
     "presented_to": "INVOLVES",
+    # BUG-002: Additional INVOLVES mappings (AC #4)
+    "has_characteristic": "INVOLVES",
+    "characterized_by": "INVOLVES",
 }
 
 # Default confidence when Cognee doesn't provide one
