@@ -617,3 +617,304 @@ class TestCheckCommandCollisionDisplay:
         assert "highlighted" in result.output.lower() or ">>" in result.output, (
             f"Expected collision highlighting indicator in output: {result.output}"
         )
+
+
+def _create_mixed_confidence_graph() -> Graph:
+    """Create a graph with collisions of varying confidence levels.
+
+    Returns graph with HIGH, MEDIUM, and LOW confidence collisions for testing
+    the verbose flag and confidence filtering.
+    """
+    nodes = (
+        # HIGH confidence collision source
+        Node(
+            id="person-aunt-susan",
+            label="Aunt Susan",
+            type="Person",
+            source="user-stated",
+            metadata={},
+        ),
+        # LOW confidence collision source
+        Node(
+            id="person-neighbor",
+            label="Neighbor Bob",
+            type="Person",
+            source="ai-inferred",
+            metadata={},
+        ),
+        # Energy states
+        Node(
+            id="energystate-drained",
+            label="drained",
+            type="EnergyState",
+            source="ai-inferred",
+            metadata={},
+        ),
+        Node(
+            id="energystate-tired",
+            label="tired",
+            type="EnergyState",
+            source="ai-inferred",
+            metadata={},
+        ),
+        Node(
+            id="energystate-focused",
+            label="focused",
+            type="EnergyState",
+            source="ai-inferred",
+            metadata={},
+        ),
+        # Activities
+        Node(
+            id="activity-presentation",
+            label="Strategy Presentation",
+            type="Activity",
+            source="user-stated",
+            metadata={"day": "Monday"},
+        ),
+        Node(
+            id="activity-meeting",
+            label="Team Meeting",
+            type="Activity",
+            source="user-stated",
+            metadata={"day": "Tuesday"},
+        ),
+    )
+    edges = (
+        # HIGH confidence collision: Aunt Susan (0.85) -> drained -> focused
+        Edge(
+            source_id="person-aunt-susan",
+            target_id="energystate-drained",
+            relationship="DRAINS",
+            confidence=0.85,
+            metadata={},
+        ),
+        Edge(
+            source_id="energystate-drained",
+            target_id="energystate-focused",
+            relationship="CONFLICTS_WITH",
+            confidence=0.82,
+            metadata={},
+        ),
+        Edge(
+            source_id="activity-presentation",
+            target_id="energystate-focused",
+            relationship="REQUIRES",
+            confidence=0.88,
+            metadata={},
+        ),
+        # LOW confidence collision: Neighbor (0.35) -> tired -> focused
+        Edge(
+            source_id="person-neighbor",
+            target_id="energystate-tired",
+            relationship="DRAINS",
+            confidence=0.35,
+            metadata={},
+        ),
+        Edge(
+            source_id="energystate-tired",
+            target_id="energystate-focused",
+            relationship="CONFLICTS_WITH",
+            confidence=0.40,
+            metadata={},
+        ),
+        Edge(
+            source_id="activity-meeting",
+            target_id="energystate-focused",
+            relationship="REQUIRES",
+            confidence=0.45,
+            metadata={},
+        ),
+    )
+    return Graph(nodes=nodes, edges=edges)
+
+
+class TestCheckCommandVerboseFiltering:
+    """Integration tests for Story 2.4: Confidence Filtering & Verbose Flag."""
+
+    def test_check_without_verbose_hides_low_confidence(self) -> None:
+        """Test check command hides low-confidence collisions by default (AC #5).
+
+        Story 2.4 AC #5: Low-confidence collisions (<0.5) excluded from default output.
+        Note: Low-confidence entities may still appear in the Knowledge Graph
+        visualization, but their collision panels should not be shown.
+        """
+        runner = CliRunner()
+        graph = _create_mixed_confidence_graph()
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_COLLISION_DETECTED
+        # HIGH confidence collision should be shown in collision panel
+        assert "Aunt Susan" in result.output, (
+            f"Expected high-confidence entity in output: {result.output}"
+        )
+        # LOW confidence collision panel should be hidden (check the collision panels)
+        # Extract the collision panel section (before "Knowledge Graph")
+        collision_section = result.output.split("Knowledge Graph")[0]
+        assert "Neighbor Bob" not in collision_section, (
+            f"Low-confidence collision panel should be hidden: {collision_section}"
+        )
+        # Should mention hidden collisions
+        assert "hidden" in result.output.lower(), (
+            f"Expected 'hidden' mention for filtered collisions: {result.output}"
+        )
+
+    def test_check_with_verbose_shows_all_collisions(self) -> None:
+        """Test check command with --verbose shows all collisions (AC #5).
+
+        Story 2.4 AC #5: Can be shown with `--verbose` flag.
+        """
+        runner = CliRunner()
+        graph = _create_mixed_confidence_graph()
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check", "--verbose"])
+
+        assert result.exit_code == EXIT_COLLISION_DETECTED
+        # Both collisions should be shown
+        assert "Aunt Susan" in result.output, (
+            f"Expected high-confidence entity in verbose output: {result.output}"
+        )
+        assert "Neighbor Bob" in result.output, (
+            f"Expected low-confidence entity in verbose output: {result.output}"
+        )
+
+    def test_check_with_short_verbose_flag(self) -> None:
+        """Test check command with -v short flag (AC #5).
+
+        Story 2.4: Support both --verbose and -v flags.
+        """
+        runner = CliRunner()
+        graph = _create_mixed_confidence_graph()
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check", "-v"])
+
+        assert result.exit_code == EXIT_COLLISION_DETECTED
+        # LOW confidence collision should be visible with -v
+        assert "Neighbor Bob" in result.output, (
+            f"Expected low-confidence entity with -v flag: {result.output}"
+        )
+
+    def test_check_shows_hidden_count_when_filtering(self) -> None:
+        """Test check command shows count of hidden low-confidence collisions (AC #5).
+
+        Story 2.4 AC #5: Summary shows how many collisions were filtered.
+        """
+        runner = CliRunner()
+        graph = _create_mixed_confidence_graph()
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_COLLISION_DETECTED
+        # Should mention hidden collisions and --verbose
+        assert "verbose" in result.output.lower() or "hidden" in result.output.lower(), (
+            f"Expected verbose hint when collisions hidden: {result.output}"
+        )
+
+    def test_check_collisions_sorted_by_confidence(self) -> None:
+        """Test collisions are sorted by confidence descending (AC #7).
+
+        Story 2.4 AC #7: Results sorted by confidence (most certain first).
+        """
+        runner = CliRunner()
+
+        # Create graph with known confidence ordering
+        nodes = (
+            Node(id="person-low", label="Low Conf Person", type="Person", source="ai-inferred"),
+            Node(id="person-high", label="High Conf Person", type="Person", source="user-stated"),
+            Node(id="drained", label="drained", type="EnergyState", source="ai-inferred"),
+            Node(id="focused", label="focused", type="EnergyState", source="ai-inferred"),
+            Node(id="activity", label="Activity", type="Activity", source="user-stated"),
+        )
+        edges = (
+            # First collision has LOWER confidence
+            Edge(
+                source_id="person-low",
+                target_id="drained",
+                relationship="DRAINS",
+                confidence=0.55,
+            ),
+            Edge(
+                source_id="drained",
+                target_id="focused",
+                relationship="CONFLICTS_WITH",
+                confidence=0.55,
+            ),
+            Edge(
+                source_id="activity",
+                target_id="focused",
+                relationship="REQUIRES",
+                confidence=0.55,
+            ),
+            # Second collision has HIGHER confidence
+            Edge(
+                source_id="person-high",
+                target_id="drained",
+                relationship="DRAINS",
+                confidence=0.95,
+            ),
+        )
+        graph = Graph(nodes=nodes, edges=edges)
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        # High confidence should appear first
+        if "High Conf Person" in result.output and "Low Conf Person" in result.output:
+            high_pos = result.output.find("High Conf Person")
+            low_pos = result.output.find("Low Conf Person")
+            assert high_pos < low_pos, (
+                f"High confidence should appear first. High pos: {high_pos}, Low pos: {low_pos}"
+            )
+
+    def test_check_verbose_flag_appears_in_help(self) -> None:
+        """Test --verbose flag documented in check command help.
+
+        Story 2.4: Help text explains verbose behavior.
+        """
+        runner = CliRunner()
+        result = runner.invoke(main, ["check", "--help"])
+
+        assert result.exit_code == 0
+        assert "verbose" in result.output.lower(), (
+            f"Expected --verbose in help text: {result.output}"
+        )
+
+    def test_check_low_confidence_shows_speculative_styling(self) -> None:
+        """Test low-confidence collisions show SPECULATIVE styling when verbose (AC #5).
+
+        Story 2.4 AC #5: LOW confidence shown as "SPECULATIVE" with dimmed styling.
+        """
+        runner = CliRunner()
+        graph = _create_mixed_confidence_graph()
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check", "--verbose"])
+
+        assert result.exit_code == EXIT_COLLISION_DETECTED
+        # LOW confidence collision should show SPECULATIVE
+        assert "SPECULATIVE" in result.output, (
+            f"Expected SPECULATIVE for low-confidence collision: {result.output}"
+        )

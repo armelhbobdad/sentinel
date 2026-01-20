@@ -32,6 +32,37 @@ console = Console()
 error_console = Console(stderr=True)
 
 
+def filter_collisions_by_confidence(
+    collisions: list[ScoredCollision], min_threshold: float
+) -> list[ScoredCollision]:
+    """Filter collisions to only include those at or above the confidence threshold.
+
+    Args:
+        collisions: List of scored collisions to filter.
+        min_threshold: Minimum confidence threshold (inclusive).
+
+    Returns:
+        List of collisions with confidence >= min_threshold.
+    """
+    return [c for c in collisions if c.confidence >= min_threshold]
+
+
+def sort_collisions_by_confidence(
+    collisions: list[ScoredCollision],
+) -> list[ScoredCollision]:
+    """Sort collisions by confidence in descending order (highest first).
+
+    Uses stable sort to preserve order for equal confidence values.
+
+    Args:
+        collisions: List of scored collisions to sort.
+
+    Returns:
+        New list sorted by confidence descending.
+    """
+    return sorted(collisions, key=lambda c: c.confidence, reverse=True)
+
+
 def format_collision_path(collision: ScoredCollision) -> str:
     """Format collision path for display with Rich markup.
 
@@ -148,9 +179,12 @@ def display_collision_warning(
     if confidence_level == "HIGH":
         header = f"⚠️  COLLISION DETECTED                    Confidence: {confidence_pct}%"
         border_style = "red bold"
-    else:
+    elif confidence_level == "MEDIUM":
         header = f"⚡ POTENTIAL RISK                         Confidence: {confidence_pct}%"
         border_style = "yellow"
+    else:  # LOW - only shown when verbose=True
+        header = f"💭 SPECULATIVE                            Confidence: {confidence_pct}%"
+        border_style = "dim"
 
     # Format the collision path
     formatted_path = format_collision_path(collision)
@@ -324,8 +358,14 @@ def paste(ctx: click.Context) -> None:
 
 
 @main.command()
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show all collisions including low-confidence speculative ones.",
+)
 @click.pass_context
-def check(ctx: click.Context) -> None:
+def check(ctx: click.Context, verbose: bool) -> None:
     """Check your schedule for energy collisions.
 
     Analyzes the knowledge graph for collision patterns where energy-draining
@@ -333,8 +373,12 @@ def check(ctx: click.Context) -> None:
 
     Pattern detected: DRAINS → CONFLICTS_WITH → REQUIRES
 
+    By default, only collisions with confidence >= 50% are shown. Use --verbose
+    to see all collisions including low-confidence speculative ones.
+
     Examples:
         sentinel check              # Check for collisions in saved graph
+        sentinel check --verbose    # Include low-confidence speculative collisions
         sentinel paste < schedule.txt && sentinel check   # Ingest then check
     """
     from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -400,28 +444,56 @@ def check(ctx: click.Context) -> None:
             error_console.print("[yellow]Analysis timed out. Showing partial results.[/yellow]")
 
         # Use domain-enhanced collision detection (Story 2.2/2.3)
-        collisions = detect_cross_domain_collisions(graph)
+        all_collisions = detect_cross_domain_collisions(graph)
 
-        if not collisions:
+        if not all_collisions:
             console.print("[green]✓[/green] No energy collisions detected!")
             console.print("[dim]Your schedule looks balanced.[/dim]")
             raise SystemExit(EXIT_SUCCESS)
 
+        # Sort collisions by confidence descending (Story 2.4 AC #7)
+        all_collisions = sort_collisions_by_confidence(all_collisions)
+
+        # Filter by confidence unless verbose (Story 2.4 AC #5)
+        if verbose:
+            display_collisions = all_collisions
+            hidden_count = 0
+        else:
+            display_collisions = filter_collisions_by_confidence(all_collisions, MEDIUM_CONFIDENCE)
+            hidden_count = len(all_collisions) - len(display_collisions)
+
+        # If all collisions were filtered out, show success message
+        if not display_collisions:
+            console.print("[green]✓[/green] No significant collisions detected!")
+            console.print("[dim]Your schedule looks balanced.[/dim]")
+            if hidden_count > 0:
+                console.print(
+                    f"[dim]({hidden_count} low-confidence speculative results hidden, "
+                    "use --verbose to show)[/dim]"
+                )
+            raise SystemExit(EXIT_SUCCESS)
+
         # Display each collision with formatted path and context (Story 2.3)
         console.print()  # Blank line for visual separation
-        for i, collision in enumerate(collisions, 1):
+        for i, collision in enumerate(display_collisions, 1):
             display_collision_warning(collision, i, graph)
             console.print()  # Blank line between collisions
 
-        # Show summary
-        collision_count = len(collisions)
+        # Show summary with filtering info (Story 2.4 AC #5)
+        collision_count = len(display_collisions)
         plural = "s" if collision_count != 1 else ""
-        console.print(
+        summary = (
             f"[yellow]Found {collision_count} collision{plural} affecting your schedule.[/yellow]"
         )
+        console.print(summary)
+
+        if hidden_count > 0:
+            console.print(
+                f"[dim]({hidden_count} low-confidence hidden, use --verbose to show)[/dim]"
+            )
 
         # Show ASCII graph with collision paths highlighted (AC #4)
-        collision_paths = [c.path for c in collisions]
+        collision_paths = [c.path for c in display_collisions]
         console.print()
         console.print("[bold]Knowledge Graph (collision paths highlighted with >>):[/bold]")
         ascii_output = render_ascii(graph, collision_paths=collision_paths)

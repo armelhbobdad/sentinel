@@ -19,6 +19,10 @@ DEFAULT_TIMEOUT: Final[int] = 5  # Seconds per traversal hop (NFR6)
 MAX_CHECK_TIME: Final[int] = 15  # Total check command timeout (NFR1)
 
 # Confidence thresholds for collision scoring
+# HIGH_CONFIDENCE (0.8): Collision shown as "COLLISION DETECTED" (red bold)
+# MEDIUM_CONFIDENCE (0.5): Collision shown as "POTENTIAL RISK" (yellow)
+#                          This is also the default filtering threshold
+# Collisions below MEDIUM_CONFIDENCE shown as "SPECULATIVE" (dim) with --verbose
 HIGH_CONFIDENCE: Final[float] = 0.8
 MEDIUM_CONFIDENCE: Final[float] = 0.5
 
