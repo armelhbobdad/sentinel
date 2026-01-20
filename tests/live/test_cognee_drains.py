@@ -65,18 +65,13 @@ async def test_cognee_produces_drains_edges(collision_scenario_text: str) -> Non
     # Check for DRAINS edges
     drains_edges = [e for e in graph.edges if e.relationship == "DRAINS"]
 
-    # This assertion documents expected behavior
-    # If it fails, we need prompt engineering or post-processing
-    if not drains_edges:
-        pytest.skip(
-            "DRAINS edges not produced by Cognee. "
-            "Collision detection may require prompt engineering or post-processing. "
-            f"Edge types found: {sorted(edge_types)}"
-        )
-
+    # RELATION_TYPE_MAP should map Cognee's LLM-generated semantic relation types
+    # (drains_energy, is_emotionally_draining, etc.) to DRAINS edges.
+    # If this fails, Cognee may be producing new unmapped relation variants.
     assert len(drains_edges) >= 1, (
         f"Expected at least one DRAINS edge, got {len(drains_edges)}. "
-        f"Edge types found: {sorted(edge_types)}"
+        f"Edge types found: {sorted(edge_types)}. "
+        "If Cognee produced new semantic variants, add them to RELATION_TYPE_MAP in engine.py."
     )
 
 
@@ -114,21 +109,84 @@ async def test_cognee_produces_collision_pattern_edges(
     print(f"  CONFLICTS_WITH: {'✓' if has_conflicts else '✗'}")
     print(f"  REQUIRES: {'✓' if has_requires else '✗'}")
 
-    # Document findings
-    if not all([has_drains, has_conflicts, has_requires]):
-        missing = []
-        if not has_drains:
-            missing.append("DRAINS")
-        if not has_conflicts:
-            missing.append("CONFLICTS_WITH")
-        if not has_requires:
-            missing.append("REQUIRES")
+    # RELATION_TYPE_MAP should map Cognee's semantic relations to DRAINS/REQUIRES edges.
+    # CONFLICTS_WITH may still require additional prompt engineering.
+    assert has_drains, (
+        f"Expected DRAINS edges. Available: {list(edge_counts.keys())}. "
+        "If Cognee produced new drain-related variants, add them to RELATION_TYPE_MAP."
+    )
 
-        pytest.skip(
-            f"Missing collision pattern edges: {missing}. "
-            "Consider prompt engineering or post-processing to infer these relationships. "
-            f"Available edge types: {list(edge_counts.keys())}"
+    assert has_requires, (
+        f"Expected REQUIRES edges. Available: {list(edge_counts.keys())}. "
+        "If Cognee produced new requires-related variants, add them to RELATION_TYPE_MAP."
+    )
+
+    # Note: CONFLICTS_WITH may still need prompt engineering if Cognee doesn't
+    # generate explicit conflict relationships. Document the finding.
+    if not has_conflicts:
+        print(
+            "\n⚠️  CONFLICTS_WITH edges not found. "
+            "Collision detection may need to infer conflicts from DRAINS→REQUIRES patterns."
         )
+
+
+@pytest.mark.asyncio
+async def test_e2e_collision_detection_with_typical_week() -> None:
+    """E2E test: Ingest maya_typical_week.txt and verify collision detection (AC #5).
+
+    BUG-001 Acceptance Criteria #5: Given a schedule with draining activities
+    before focus-requiring activities, when `sentinel check` runs,
+    then at least one collision is detected.
+    """
+    from pathlib import Path
+
+    from sentinel.core.engine import CogneeEngine
+    from sentinel.core.rules import detect_cross_domain_collisions
+
+    # Load the fixture file
+    fixture_path = Path(__file__).parent.parent / "fixtures" / "schedules" / "maya_typical_week.txt"
+    assert fixture_path.exists(), f"Fixture not found: {fixture_path}"
+
+    schedule_text = fixture_path.read_text()
+
+    # Ingest with real Cognee API
+    engine = CogneeEngine()
+    graph = await engine.ingest(schedule_text)
+
+    print(f"\nGraph extracted: {len(graph.nodes)} nodes, {len(graph.edges)} edges")
+
+    # Document edge types
+    edge_types = {edge.relationship for edge in graph.edges}
+    print(f"Edge types found: {sorted(edge_types)}")
+
+    # Check for collision pattern components
+    has_drains = any(e.relationship == "DRAINS" for e in graph.edges)
+    has_requires = any(e.relationship == "REQUIRES" for e in graph.edges)
+
+    print(f"DRAINS edges: {has_drains}")
+    print(f"REQUIRES edges: {has_requires}")
+
+    # Detect collisions using the cross-domain collision detection algorithm.
+    # Note: Full collision pattern requires DRAINS → CONFLICTS_WITH → REQUIRES.
+    # If CONFLICTS_WITH edges aren't produced, collision detection may need
+    # to infer conflicts from temporal proximity of DRAINS and REQUIRES edges.
+    collisions = detect_cross_domain_collisions(graph)
+
+    print(f"\nCollisions detected: {len(collisions)}")
+    for collision in collisions:
+        print(f"  - {collision.path} (confidence: {collision.confidence:.2f})")
+
+    # maya_typical_week.txt contains an obvious energy collision:
+    # - "Sunday: Dinner with Aunt Susan - always emotionally draining"
+    # - "Monday: Strategy presentation with the exec team, need to be sharp"
+    # If no collisions detected, check: (1) DRAINS/REQUIRES edges exist,
+    # (2) CONFLICTS_WITH edges exist or algorithm infers conflicts.
+    assert len(collisions) >= 1, (
+        f"Expected at least 1 collision, got {len(collisions)}. "
+        f"Edge types: {sorted(edge_types)}. DRAINS: {has_drains}, REQUIRES: {has_requires}. "
+        "Verify RELATION_TYPE_MAP covers Cognee's semantic variants. "
+        "If DRAINS/REQUIRES exist but no collisions, check CONFLICTS_WITH detection."
+    )
 
 
 @pytest.mark.asyncio

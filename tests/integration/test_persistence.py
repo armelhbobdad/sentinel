@@ -80,7 +80,7 @@ class TestPasteCommandPersistence:
         with (
             patch.dict(os.environ, {"XDG_DATA_HOME": str(tmp_path)}),
             patch(
-                "sentinel.cli.commands.CogneeEngine.ingest",
+                "sentinel.core.engine.CogneeEngine.ingest",
                 new_callable=AsyncMock,
                 return_value=mock_graph,
             ),
@@ -115,7 +115,7 @@ class TestPasteCommandPersistence:
         with (
             patch.dict(os.environ, {"XDG_DATA_HOME": str(new_xdg)}),
             patch(
-                "sentinel.cli.commands.CogneeEngine.ingest",
+                "sentinel.core.engine.CogneeEngine.ingest",
                 new_callable=AsyncMock,
                 return_value=mock_graph,
             ),
@@ -136,7 +136,7 @@ class TestPasteCommandPersistence:
         with (
             patch.dict(os.environ, {"XDG_DATA_HOME": str(tmp_path)}),
             patch(
-                "sentinel.cli.commands.CogneeEngine.ingest",
+                "sentinel.core.engine.CogneeEngine.ingest",
                 new_callable=AsyncMock,
                 return_value=mock_graph,
             ),
@@ -157,7 +157,7 @@ class TestPasteCommandPersistence:
         with (
             patch.dict(os.environ, {"XDG_DATA_HOME": str(tmp_path)}),
             patch(
-                "sentinel.cli.commands.CogneeEngine.ingest",
+                "sentinel.core.engine.CogneeEngine.ingest",
                 new_callable=AsyncMock,
                 return_value=mock_graph,
             ),

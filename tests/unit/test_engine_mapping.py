@@ -489,6 +489,209 @@ class TestMetadataPreservation:
         assert node.type == "Activity", f"Expected Activity default, got {node.type}"
 
 
+class TestBug001MissingRelationTypeMappings:
+    """Tests for BUG-001: Missing relation type mappings.
+
+    These tests verify that Cognee's LLM-generated semantic relation types
+    are properly mapped to Sentinel's canonical edge types.
+    """
+
+    # Task 1: DRAINS mappings (AC #1, #2)
+    def test_map_drains_energy_relation(self) -> None:
+        """Cognee 'drains_energy' should map to DRAINS edge (AC #1)."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "drains_energy",
+            "source_id": "activity-dinner",
+            "target_id": "person-maya",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "drains_energy should map to valid edge"
+        assert edge.relationship == "DRAINS", f"Expected DRAINS, got {edge.relationship}"
+
+    def test_map_is_emotionally_draining_relation(self) -> None:
+        """Cognee 'is_emotionally_draining' should map to DRAINS edge (AC #2)."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "is_emotionally_draining",
+            "source_id": "activity-dinner",
+            "target_id": "person-maya",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "is_emotionally_draining should map to valid edge"
+        assert edge.relationship == "DRAINS", f"Expected DRAINS, got {edge.relationship}"
+
+    def test_map_emotionally_draining_relation(self) -> None:
+        """Cognee 'emotionally_draining' variant should map to DRAINS edge."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "emotionally_draining",
+            "source_id": "activity-dinner",
+            "target_id": "person-maya",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "emotionally_draining should map to valid edge"
+        assert edge.relationship == "DRAINS", f"Expected DRAINS, got {edge.relationship}"
+
+    def test_map_causes_exhaustion_relation(self) -> None:
+        """Cognee 'causes_exhaustion' variant should map to DRAINS edge."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "causes_exhaustion",
+            "source_id": "activity-workout",
+            "target_id": "person-maya",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "causes_exhaustion should map to valid edge"
+        assert edge.relationship == "DRAINS", f"Expected DRAINS, got {edge.relationship}"
+
+    def test_map_energy_draining_relation(self) -> None:
+        """Cognee 'energy_draining' variant should map to DRAINS edge."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "energy_draining",
+            "source_id": "activity-meeting",
+            "target_id": "person-maya",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "energy_draining should map to valid edge"
+        assert edge.relationship == "DRAINS", f"Expected DRAINS, got {edge.relationship}"
+
+    # Task 2: REQUIRES mappings (AC #3, #4)
+    def test_map_requires_high_focus_relation(self) -> None:
+        """Cognee 'requires_high_focus' should map to REQUIRES edge (AC #3)."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "requires_high_focus",
+            "source_id": "activity-presentation",
+            "target_id": "energy-high",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "requires_high_focus should map to valid edge"
+        assert edge.relationship == "REQUIRES", f"Expected REQUIRES, got {edge.relationship}"
+
+    def test_map_needs_to_be_well_rested_for_relation(self) -> None:
+        """Cognee 'needs_to_be_well_rested_for' should map to REQUIRES edge (AC #4)."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "needs_to_be_well_rested_for",
+            "source_id": "activity-presentation",
+            "target_id": "energy-high",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "needs_to_be_well_rested_for should map to valid edge"
+        assert edge.relationship == "REQUIRES", f"Expected REQUIRES, got {edge.relationship}"
+
+    def test_map_requires_focus_relation(self) -> None:
+        """Cognee 'requires_focus' variant should map to REQUIRES edge."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "requires_focus",
+            "source_id": "activity-coding",
+            "target_id": "energy-high",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "requires_focus should map to valid edge"
+        assert edge.relationship == "REQUIRES", f"Expected REQUIRES, got {edge.relationship}"
+
+    def test_map_needs_energy_relation(self) -> None:
+        """Cognee 'needs_energy' variant should map to REQUIRES edge."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "needs_energy",
+            "source_id": "activity-workout",
+            "target_id": "energy-high",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "needs_energy should map to valid edge"
+        assert edge.relationship == "REQUIRES", f"Expected REQUIRES, got {edge.relationship}"
+
+    def test_map_requires_energy_relation(self) -> None:
+        """Cognee 'requires_energy' variant should map to REQUIRES edge."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "requires_energy",
+            "source_id": "activity-presentation",
+            "target_id": "energy-high",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "requires_energy should map to valid edge"
+        assert edge.relationship == "REQUIRES", f"Expected REQUIRES, got {edge.relationship}"
+
+    # Task 3: INVOLVES mappings
+    def test_map_attends_relation(self) -> None:
+        """Cognee 'attends' should map to INVOLVES edge."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "attends",
+            "source_id": "person-maya",
+            "target_id": "activity-meeting",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "attends should map to valid edge"
+        assert edge.relationship == "INVOLVES", f"Expected INVOLVES, got {edge.relationship}"
+
+    def test_map_presented_to_relation(self) -> None:
+        """Cognee 'presented_to' should map to INVOLVES edge."""
+        from sentinel.core.engine import _map_cognee_relation_to_edge
+
+        cognee_relation = {
+            "type": "presented_to",
+            "source_id": "activity-presentation",
+            "target_id": "person-stakeholders",
+            "confidence": 0.8,
+        }
+
+        edge = _map_cognee_relation_to_edge(cognee_relation)
+
+        assert edge is not None, "presented_to should map to valid edge"
+        assert edge.relationship == "INVOLVES", f"Expected INVOLVES, got {edge.relationship}"
+
+
 class TestEdgeReferenceValidation:
     """Tests for edge reference validation (H2 fix)."""
 

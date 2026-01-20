@@ -130,7 +130,7 @@ class TestPasteCommandIntegration:
 
         runner = CliRunner()
         with patch(
-            "sentinel.cli.commands.CogneeEngine.ingest",
+            "sentinel.core.engine.CogneeEngine.ingest",
             new_callable=AsyncMock,
             return_value=_create_collision_graph(),
         ):
@@ -151,7 +151,7 @@ class TestPasteCommandIntegration:
 
         runner = CliRunner()
         with patch(
-            "sentinel.cli.commands.CogneeEngine.ingest",
+            "sentinel.core.engine.CogneeEngine.ingest",
             new_callable=AsyncMock,
             return_value=_create_boring_graph(),
         ):
@@ -169,7 +169,7 @@ class TestPasteCommandIntegration:
 
         runner = CliRunner()
         with patch(
-            "sentinel.cli.commands.CogneeEngine.ingest",
+            "sentinel.core.engine.CogneeEngine.ingest",
             new_callable=AsyncMock,
             return_value=_create_unicode_graph(),
         ):
@@ -203,7 +203,7 @@ class TestPasteCommandIntegration:
         runner = CliRunner()
         # CliRunner's input parameter simulates piped stdin
         with patch(
-            "sentinel.cli.commands.CogneeEngine.ingest",
+            "sentinel.core.engine.CogneeEngine.ingest",
             new_callable=AsyncMock,
             return_value=_create_collision_graph(),
         ):
@@ -238,7 +238,7 @@ class TestPasteCommandIntegration:
         mock_graph = _create_collision_graph()
         runner = CliRunner()
         with patch(
-            "sentinel.cli.commands.CogneeEngine.ingest",
+            "sentinel.core.engine.CogneeEngine.ingest",
             new_callable=AsyncMock,
             return_value=mock_graph,
         ):

@@ -96,12 +96,24 @@ RELATION_TYPE_MAP: dict[str, str] = {
     "fatigues": "DRAINS",
     "causes_fatigue": "DRAINS",
     "energy_drain": "DRAINS",
+    # BUG-001: Cognee LLM-generated DRAINS variants
+    "drains_energy": "DRAINS",
+    "is_emotionally_draining": "DRAINS",
+    "emotionally_draining": "DRAINS",
+    "causes_exhaustion": "DRAINS",
+    "energy_draining": "DRAINS",
     # REQUIRES mappings
     "requires": "REQUIRES",
     "needs": "REQUIRES",
     "demands": "REQUIRES",
     "depends_on": "REQUIRES",
     "prerequisite": "REQUIRES",
+    # BUG-001: Cognee LLM-generated REQUIRES variants
+    "requires_high_focus": "REQUIRES",
+    "needs_to_be_well_rested_for": "REQUIRES",
+    "requires_focus": "REQUIRES",
+    "needs_energy": "REQUIRES",
+    "requires_energy": "REQUIRES",
     # CONFLICTS_WITH mappings
     "conflicts": "CONFLICTS_WITH",
     "conflicts_with": "CONFLICTS_WITH",
@@ -121,6 +133,9 @@ RELATION_TYPE_MAP: dict[str, str] = {
     "has_note": "INVOLVES",  # Event has a note about context/feelings
     "about": "INVOLVES",  # Relation is about a topic
     "involves_person": "INVOLVES",  # Event involves a person
+    # BUG-001: Cognee LLM-generated INVOLVES variants
+    "attends": "INVOLVES",
+    "presented_to": "INVOLVES",
 }
 
 # Default confidence when Cognee doesn't provide one
