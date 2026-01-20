@@ -139,7 +139,7 @@ class TestCheckCommandIntegration:
         )
 
     def test_check_without_collision_returns_exit_code_0(self) -> None:
-        """Test check command returns exit code 0 when no collisions found."""
+        """Test check command returns exit code 0 when no collisions found (AC #2)."""
         runner = CliRunner()
 
         graph = _create_no_collision_graph()
@@ -153,7 +153,8 @@ class TestCheckCommandIntegration:
         assert result.exit_code == EXIT_SUCCESS, (
             f"Expected exit code {EXIT_SUCCESS}, got {result.exit_code}. Output: {result.output}"
         )
-        assert "No energy collisions detected" in result.output, (
+        # Story 2.5: Enhanced empty state message
+        assert "NO COLLISIONS DETECTED" in result.output, (
             f"Expected success message: {result.output}"
         )
 
@@ -174,7 +175,10 @@ class TestCheckCommandIntegration:
         assert "sentinel paste" in result.output, f"Expected paste hint: {result.output}"
 
     def test_check_with_empty_graph_shows_success(self) -> None:
-        """Test check command handles empty graph gracefully."""
+        """Test check command handles empty graph gracefully (AC #5).
+
+        Story 2.5: Graph with nodes but no edges shows count as 0.
+        """
         runner = CliRunner()
 
         empty_graph = Graph(nodes=(), edges=())
@@ -188,9 +192,11 @@ class TestCheckCommandIntegration:
         assert result.exit_code == EXIT_SUCCESS, (
             f"Expected exit code {EXIT_SUCCESS}, got {result.exit_code}. Output: {result.output}"
         )
-        assert "No relationships to analyze" in result.output, (
+        # Story 2.5: Enhanced empty state with relationship count
+        assert "NO COLLISIONS DETECTED" in result.output, (
             f"Expected empty state message: {result.output}"
         )
+        assert "0" in result.output, f"Expected '0' relationships in output: {result.output}"
 
     def test_check_command_exists_in_help(self) -> None:
         """Test that check command appears in help output."""
@@ -727,6 +733,206 @@ def _create_mixed_confidence_graph() -> Graph:
         ),
     )
     return Graph(nodes=nodes, edges=edges)
+
+
+class TestCheckCommandEmptyState:
+    """Integration tests for Story 2.5: Graceful Empty State."""
+
+    def test_check_no_collisions_shows_positive_message(self) -> None:
+        """Check with no collisions displays enhanced positive message (AC #1)."""
+        runner = CliRunner()
+        graph = _create_no_collision_graph()
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_SUCCESS
+        assert "NO COLLISIONS DETECTED" in result.output, (
+            f"Expected 'NO COLLISIONS DETECTED' header: {result.output}"
+        )
+        assert "analyzed relationships" in result.output, (
+            f"Expected relationship count in output: {result.output}"
+        )
+        assert "Go get 'em" in result.output, f"Expected motivational message: {result.output}"
+        assert "resilient" in result.output.lower(), (
+            f"Expected 'resilient' in output: {result.output}"
+        )
+
+    def test_check_no_collisions_returns_exit_code_0(self) -> None:
+        """Check with no collisions returns exit code 0 (AC #2)."""
+        runner = CliRunner()
+        graph = _create_no_collision_graph()
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_SUCCESS, f"Expected exit code 0, got {result.exit_code}"
+
+    def test_check_boring_week_no_false_positives(self) -> None:
+        """Boring week scenario produces no collision warnings (AC #3).
+
+        Story 2.5 AC #3: No false positives with minimal activities.
+        Uses a mock graph representing a "boring week" with no collision patterns.
+        """
+        runner = CliRunner()
+        # Boring graph has no DRAINS relationships - just SCHEDULED_AT
+        graph = _create_no_collision_graph()
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_SUCCESS, (
+            f"Expected success (no collisions) for boring week: {result.output}"
+        )
+        # Should NOT contain collision warning keywords
+        assert "COLLISION DETECTED" not in result.output.replace("NO COLLISIONS DETECTED", ""), (
+            f"Should not show collision warnings: {result.output}"
+        )
+        assert "⚠️" not in result.output, f"Should not show warning emoji: {result.output}"
+
+    def test_boring_week_fixture_has_no_collision_patterns(self) -> None:
+        """Validate maya_boring_week.txt fixture doesn't contain collision-inducing content.
+
+        Story 2.5 Task 6: Validate no DRAINS→CONFLICTS_WITH→REQUIRES paths.
+        This test validates the fixture file content directly.
+        """
+        from pathlib import Path
+
+        fixture_path = (
+            Path(__file__).parent.parent / "fixtures" / "schedules" / "maya_boring_week.txt"
+        )
+
+        assert fixture_path.exists(), f"Fixture file not found: {fixture_path}"
+
+        content = fixture_path.read_text().lower()
+
+        # Fixture should not contain keywords that trigger collision patterns
+        collision_keywords = [
+            "drains",
+            "exhausting",
+            "stressful",
+            "demanding",
+            "aunt susan",  # Known collision trigger from test fixtures
+            "presentation",  # Professional activity requiring focus
+            "deadline",
+        ]
+
+        for keyword in collision_keywords:
+            assert keyword not in content, (
+                f"Boring week fixture should not contain '{keyword}' "
+                f"which may trigger collision detection"
+            )
+
+    def test_check_empty_graph_shows_error_and_exits_1(self) -> None:
+        """Check with no graph shows error and exits 1 (AC #4)."""
+        runner = CliRunner()
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=None,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_USER_ERROR, f"Expected exit code 1, got {result.exit_code}"
+        assert "No schedule data found" in result.output, f"Expected error message: {result.output}"
+        assert "sentinel paste" in result.output, f"Expected paste hint: {result.output}"
+
+    def test_check_no_relationships_shows_zero_count(self) -> None:
+        """Check with graph but no edges shows count as 0 (AC #5)."""
+        runner = CliRunner()
+        # Graph with nodes but no edges
+        nodes = (
+            Node(
+                id="activity-only",
+                label="Lonely Activity",
+                type="Activity",
+                source="user-stated",
+            ),
+        )
+        empty_edges_graph = Graph(nodes=nodes, edges=())
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=empty_edges_graph,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_SUCCESS
+        # Should show 0 relationships
+        assert "0" in result.output, f"Expected '0' relationships: {result.output}"
+        assert "analyzed relationships" in result.output, (
+            f"Expected relationship count: {result.output}"
+        )
+
+    def test_check_empty_state_no_ascii_graph(self) -> None:
+        """Empty state output does not include ASCII graph (AC #6)."""
+        runner = CliRunner()
+        graph = _create_no_collision_graph()
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_SUCCESS
+        # ASCII graphs contain these patterns from phart
+        assert "Knowledge Graph" not in result.output, (
+            f"Should not show Knowledge Graph header: {result.output}"
+        )
+        # phart uses box-drawing characters
+        assert "│" not in result.output, f"Should not show ASCII graph lines: {result.output}"
+
+    def test_check_shows_correct_relationship_count(self) -> None:
+        """Empty state shows actual count of analyzed relationships."""
+        runner = CliRunner()
+        # Create graph with exactly 3 relationships
+        nodes = (
+            Node(id="a1", label="Activity 1", type="Activity", source="user-stated"),
+            Node(id="a2", label="Activity 2", type="Activity", source="user-stated"),
+            Node(id="t1", label="Monday", type="TimeSlot", source="ai-inferred"),
+            Node(id="t2", label="Tuesday", type="TimeSlot", source="ai-inferred"),
+        )
+        edges = (
+            Edge(source_id="a1", target_id="t1", relationship="SCHEDULED_AT", confidence=0.9),
+            Edge(source_id="a2", target_id="t2", relationship="SCHEDULED_AT", confidence=0.9),
+            Edge(source_id="a1", target_id="a2", relationship="FOLLOWED_BY", confidence=0.8),
+        )
+        graph = Graph(nodes=nodes, edges=edges)
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_SUCCESS
+        # Should mention 3 relationships
+        assert "3" in result.output, f"Expected '3' relationships: {result.output}"
+
+    def test_check_emojis_display_correctly(self) -> None:
+        """Empty state displays checkmark and plant emojis (AC #1)."""
+        runner = CliRunner()
+        graph = _create_no_collision_graph()
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_SUCCESS
+        assert "✅" in result.output, f"Expected checkmark emoji: {result.output}"
+        assert "🌿" in result.output, f"Expected plant emoji: {result.output}"
 
 
 class TestCheckCommandVerboseFiltering:

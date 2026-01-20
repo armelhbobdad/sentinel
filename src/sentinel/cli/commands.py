@@ -156,6 +156,40 @@ def extract_temporal_context(collision: ScoredCollision, graph: Graph) -> str | 
     return None
 
 
+def display_empty_state(
+    relationships_analyzed: int,
+    hidden_count: int = 0,
+    target_console: Console | None = None,
+) -> None:
+    """Display a positive empty state message when no collisions are found.
+
+    Args:
+        relationships_analyzed: Number of relationships that were checked.
+        hidden_count: Number of low-confidence collisions hidden (for summary).
+        target_console: Optional Rich console (defaults to module console).
+    """
+    output_console = target_console if target_console is not None else console
+
+    # Header with checkmark emoji (bold green)
+    output_console.print("[bold green]✅  NO COLLISIONS DETECTED[/bold green]")
+    output_console.print()
+
+    # Supportive message
+    output_console.print("Your energy looks resilient this week.")
+    output_console.print(
+        f"No invisible conflicts found across {relationships_analyzed} analyzed relationships."
+    )
+    output_console.print("Go get 'em. 🌿")
+
+    # Show hidden count if applicable
+    if hidden_count > 0:
+        output_console.print()
+        output_console.print(
+            f"[dim]({hidden_count} low-confidence speculative results hidden, "
+            "use --verbose to show)[/dim]"
+        )
+
+
 def display_collision_warning(
     collision: ScoredCollision,
     index: int,
@@ -404,8 +438,9 @@ def check(ctx: click.Context, verbose: bool) -> None:
             raise SystemExit(EXIT_USER_ERROR)
 
         if not graph.edges:
-            console.print("[green]✓[/green] No relationships to analyze.")
-            console.print("[dim]Your schedule looks balanced.[/dim]")
+            # No relationships to analyze - show empty state with 0 count (AC #5)
+            # NOTE: No ASCII graph rendering for empty state (AC #6)
+            display_empty_state(0)
             raise SystemExit(EXIT_SUCCESS)
 
         # Track progress during traversal
@@ -447,8 +482,9 @@ def check(ctx: click.Context, verbose: bool) -> None:
         all_collisions = detect_cross_domain_collisions(graph)
 
         if not all_collisions:
-            console.print("[green]✓[/green] No energy collisions detected!")
-            console.print("[dim]Your schedule looks balanced.[/dim]")
+            # No collisions detected - show positive empty state (AC #1)
+            # NOTE: No ASCII graph rendering for empty state (AC #6)
+            display_empty_state(len(graph.edges))
             raise SystemExit(EXIT_SUCCESS)
 
         # Sort collisions by confidence descending (Story 2.4 AC #7)
@@ -464,13 +500,9 @@ def check(ctx: click.Context, verbose: bool) -> None:
 
         # If all collisions were filtered out, show success message
         if not display_collisions:
-            console.print("[green]✓[/green] No significant collisions detected!")
-            console.print("[dim]Your schedule looks balanced.[/dim]")
-            if hidden_count > 0:
-                console.print(
-                    f"[dim]({hidden_count} low-confidence speculative results hidden, "
-                    "use --verbose to show)[/dim]"
-                )
+            # All collisions below threshold - show empty state with hidden count (AC #1)
+            # NOTE: No ASCII graph rendering for empty state (AC #6)
+            display_empty_state(len(graph.edges), hidden_count)
             raise SystemExit(EXIT_SUCCESS)
 
         # Display each collision with formatted path and context (Story 2.3)
