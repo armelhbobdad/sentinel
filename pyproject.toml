@@ -13,6 +13,7 @@ dependencies = [
     "cognee",
     "phart",
     "python-dotenv",
+    "rapidfuzz>=3.0.0",
 ]
 
 [project.scripts]

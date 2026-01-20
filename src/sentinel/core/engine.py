@@ -25,6 +25,16 @@ from sentinel.core.types import (
     ScoredCollision,
 )
 
+# RapidFuzz import with graceful degradation
+try:
+    from rapidfuzz import fuzz, process
+
+    RAPIDFUZZ_AVAILABLE = True
+except ImportError:
+    RAPIDFUZZ_AVAILABLE = False
+    fuzz = None  # type: ignore[assignment]
+    process = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 # Valid edge types allowed in Sentinel graphs (AC #5)
@@ -152,6 +162,226 @@ RELATION_TYPE_MAP: dict[str, str] = {
     "has_characteristic": "INVOLVES",
     "characterized_by": "INVOLVES",
 }
+
+# Semantic keywords for Tier 2 keyword matching (Story 2-6)
+# Uses word stems to match variations (e.g., "deplet" matches "depletes", "depleted", "depletion")
+SEMANTIC_KEYWORDS: dict[str, list[str]] = {
+    "DRAINS": [
+        "drain",
+        "exhaust",
+        "deplet",
+        "fatigue",
+        "tire",
+        "sap",
+        "wear",
+        "stress",
+        "burden",
+        "overwhelm",
+        "tax",
+    ],
+    "REQUIRES": [
+        "require",
+        "need",
+        "demand",
+        "depend",
+        "necessitat",
+        "essential",
+        "must",
+        "prerequisite",
+    ],
+    "CONFLICTS_WITH": [
+        "conflict",
+        "clash",
+        "contradict",
+        "interfer",
+        "oppos",
+        "threaten",
+        "impair",
+        "hinder",
+        "block",
+        "prevent",
+        "incompatible",
+    ],
+    "SCHEDULED_AT": [
+        "schedul",
+        "occur",
+        "happen",
+        "preced",
+        "follow",
+        "before",
+        "after",
+        "during",
+        "time",
+    ],
+    "INVOLVES": [
+        "involve",
+        "include",
+        "contain",
+        "feature",
+        "characteriz",
+        "present",
+        "has",
+        "with",
+        "about",
+        "relat",
+        "associat",
+        "contribut",
+        "affect",
+        "impact",
+    ],
+}
+
+
+# Fuzzy candidate phrases for Tier 3 RapidFuzz matching (Story 2-6)
+# Curated natural language phrases for semantic similarity scoring
+FUZZY_CANDIDATES: dict[str, list[str]] = {
+    "DRAINS": [
+        "drains",
+        "drains energy",
+        "emotionally draining",
+        "causes drain",
+        "energy drain",
+        "depletes",
+        "exhausts",
+        "tires out",
+        "fatigues",
+        "wears out",
+        "stresses",
+        "causes exhaustion",
+        "leads to fatigue",
+        "reduces energy",
+        "saps energy",
+    ],
+    "REQUIRES": [
+        "requires",
+        "needs",
+        "demands",
+        "depends on",
+        "necessitates",
+        "needed by",
+        "required by",
+        "prerequisite for",
+        "essential for",
+        "must have",
+    ],
+    "CONFLICTS_WITH": [
+        "conflicts with",
+        "clashes with",
+        "contradicts",
+        "interferes with",
+        "opposes",
+        "threatens",
+        "impairs",
+        "hinders",
+        "blocks",
+        "prevents",
+        "incompatible with",
+        "at odds with",
+        "undermines",
+        "negatively impacts",
+    ],
+    "SCHEDULED_AT": [
+        "scheduled at",
+        "occurs on",
+        "happens at",
+        "takes place",
+        "precedes",
+        "follows",
+        "before",
+        "after",
+        "during",
+        "at time",
+        "on date",
+    ],
+    "INVOLVES": [
+        "involves",
+        "includes",
+        "contains",
+        "features",
+        "characterized by",
+        "presented by",
+        "has characteristic",
+        "relates to",
+        "associated with",
+        "contributes to",
+        "affects",
+        "impacts",
+        "connected to",
+        "linked to",
+        "part of",
+    ],
+}
+
+# Default fuzzy matching threshold (0-100)
+DEFAULT_FUZZY_THRESHOLD: int = 50
+
+
+def _fuzzy_match_relation(
+    relation_type: str, threshold: int = DEFAULT_FUZZY_THRESHOLD
+) -> str | None:
+    """Match relation type using RapidFuzz fuzzy matching (Tier 3).
+
+    Compares the relation type against curated candidate phrases using
+    RapidFuzz's WRatio scorer for semantic similarity.
+
+    Args:
+        relation_type: The Cognee relation type string.
+        threshold: Minimum similarity score (0-100) to accept a match.
+
+    Returns:
+        Canonical edge type if fuzzy match found above threshold, None otherwise.
+    """
+    if not RAPIDFUZZ_AVAILABLE:
+        logger.warning("RapidFuzz not available - fuzzy matching disabled")
+        return None
+
+    # Normalize: lowercase and replace underscores with spaces
+    normalized = relation_type.lower().replace("_", " ")
+
+    best_match: str | None = None
+    best_score: float = 0.0
+
+    for canonical_type, candidates in FUZZY_CANDIDATES.items():
+        # Use process.extractOne to find best match among candidates
+        result = process.extractOne(normalized, candidates, scorer=fuzz.WRatio)
+        if result is not None:
+            match_str, score, _ = result
+            if score > best_score and score >= threshold:
+                best_score = score
+                best_match = canonical_type
+
+    if best_match is not None:
+        logger.debug(
+            "Fuzzy matched '%s' to %s (score: %.1f%%)",
+            relation_type,
+            best_match,
+            best_score,
+        )
+
+    return best_match
+
+
+def _keyword_match_relation(relation_type: str) -> str | None:
+    """Match relation type using semantic keywords (Tier 2).
+
+    Checks if the relation type contains any semantic keywords that indicate
+    a known canonical type. Uses word stems for flexibility.
+
+    Args:
+        relation_type: The Cognee relation type string.
+
+    Returns:
+        Canonical edge type if keyword match found, None otherwise.
+    """
+    normalized = relation_type.lower()
+
+    for canonical_type, keywords in SEMANTIC_KEYWORDS.items():
+        for keyword in keywords:
+            if keyword in normalized:
+                return canonical_type
+
+    return None
+
 
 # Default confidence when Cognee doesn't provide one
 DEFAULT_CONFIDENCE: float = 0.8
@@ -339,7 +569,11 @@ def _map_cognee_entity_to_node(cognee_entity: dict[str, Any], text: str) -> Node
 def _map_cognee_relation_to_edge(
     cognee_relation: dict[str, Any],
 ) -> Edge | None:
-    """Map a Cognee relation to a Sentinel Edge.
+    """Map a Cognee relation to a Sentinel Edge using 3-tier strategy.
+
+    Tier 1: Exact match from RELATION_TYPE_MAP (O(1), no overhead)
+    Tier 2: Semantic keyword matching (_keyword_match_relation)
+    Tier 3: RapidFuzz fuzzy matching (_fuzzy_match_relation)
 
     Args:
         cognee_relation: Relation dict from Cognee with 'type', 'source_id',
@@ -353,19 +587,48 @@ def _map_cognee_relation_to_edge(
     target_id = cognee_relation.get("target_id", "")
     confidence = cognee_relation.get("confidence", DEFAULT_CONFIDENCE)
 
-    # Map relation type to Sentinel edge type
+    # Tier 1: Exact match from RELATION_TYPE_MAP (fastest, O(1))
     edge_type = RELATION_TYPE_MAP.get(relation_type)
-    if edge_type is None:
-        logger.warning("Unknown relation type '%s', filtering out", relation_type)
-        return None
+    if edge_type is not None:
+        logger.debug("Tier 1 exact match: '%s' → %s", relation_type, edge_type)
+        return Edge(
+            source_id=source_id,
+            target_id=target_id,
+            relationship=edge_type,
+            confidence=confidence,
+            metadata={"cognee_type": relation_type, "match_tier": "exact"},
+        )
 
-    return Edge(
-        source_id=source_id,
-        target_id=target_id,
-        relationship=edge_type,
-        confidence=confidence,
-        metadata={"cognee_type": relation_type},
+    # Tier 2: Semantic keyword matching
+    edge_type = _keyword_match_relation(relation_type)
+    if edge_type is not None:
+        logger.debug("Tier 2 keyword match: '%s' → %s", relation_type, edge_type)
+        return Edge(
+            source_id=source_id,
+            target_id=target_id,
+            relationship=edge_type,
+            confidence=confidence,
+            metadata={"cognee_type": relation_type, "match_tier": "keyword"},
+        )
+
+    # Tier 3: RapidFuzz fuzzy matching
+    edge_type = _fuzzy_match_relation(relation_type)
+    if edge_type is not None:
+        logger.debug("Tier 3 fuzzy match: '%s' → %s", relation_type, edge_type)
+        return Edge(
+            source_id=source_id,
+            target_id=target_id,
+            relationship=edge_type,
+            confidence=confidence,
+            metadata={"cognee_type": relation_type, "match_tier": "fuzzy"},
+        )
+
+    # No match found in any tier
+    logger.warning(
+        "Unknown relation type '%s', filtering out (no match in any tier)",
+        relation_type,
     )
+    return None
 
 
 def _filter_valid_edges(edges: list[Edge]) -> list[Edge]:
