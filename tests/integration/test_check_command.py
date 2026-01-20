@@ -222,9 +222,9 @@ class TestCheckCommandIntegration:
         ):
             result = runner.invoke(main, ["check"])
 
-        # Should show collision count in output
-        assert "potential collision" in result.output.lower(), (
-            f"Expected collision count in output: {result.output}"
+        # Should show collision count in output (Story 2.3 format)
+        assert "collision" in result.output.lower() and "affecting" in result.output.lower(), (
+            f"Expected collision summary in output: {result.output}"
         )
 
 
@@ -439,4 +439,181 @@ class TestCrossDomainCollisionDetection:
         # Cross-domain (SOCIAL → PROFESSIONAL) should have boosted confidence
         assert enhanced.confidence > base.confidence, (
             f"Cross-domain {enhanced.confidence} should exceed base {base.confidence}"
+        )
+
+
+class TestCheckCommandCollisionDisplay:
+    """Integration tests for Story 2.3: Warning Display with Path Explanation."""
+
+    def test_check_displays_collision_path_in_output(self) -> None:
+        """Test check command shows collision path (AC #1, #2).
+
+        Story 2.3: Warning includes full traversal path in human-readable format.
+        """
+        runner = CliRunner()
+        graph = _create_collision_graph()
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_COLLISION_DETECTED
+        # Should show entity names from the collision path
+        assert "Aunt Susan" in result.output, f"Expected entity in output: {result.output}"
+        # Should show relationship types
+        assert "DRAINS" in result.output or "→" in result.output, (
+            f"Expected path indicator in output: {result.output}"
+        )
+
+    def test_check_displays_collision_panel(self) -> None:
+        """Test check command shows collision in formatted panel (AC #1).
+
+        Story 2.3: Each collision displayed with styled border and header.
+        """
+        runner = CliRunner()
+        graph = _create_collision_graph()
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_COLLISION_DETECTED
+        # Should show collision indicator
+        assert "COLLISION" in result.output or "⚠" in result.output, (
+            f"Expected collision header in output: {result.output}"
+        )
+
+    def test_check_shows_confidence_indicator(self) -> None:
+        """Test check command shows confidence percentage (AC #1, #5).
+
+        Story 2.3: Display confidence percentage with appropriate styling.
+        """
+        runner = CliRunner()
+        graph = _create_collision_graph()
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_COLLISION_DETECTED
+        # Should show confidence indicator (either as percentage or decimal)
+        assert "%" in result.output or "Confidence" in result.output, (
+            f"Expected confidence indicator in output: {result.output}"
+        )
+
+    def test_check_shows_collision_summary(self) -> None:
+        """Test check command shows summary after collisions (AC #5).
+
+        Story 2.3: Show summary: "Found X collision(s) affecting your schedule"
+        """
+        runner = CliRunner()
+        graph = _create_collision_graph()
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_COLLISION_DETECTED
+        # Should show summary with collision count
+        assert "collision" in result.output.lower() and "affecting" in result.output.lower(), (
+            f"Expected summary in output: {result.output}"
+        )
+
+    def test_check_exit_code_1_when_collisions_found(self) -> None:
+        """Test exit code is 1 when collisions found (AC #6, FR29).
+
+        Story 2.3: Command exits with code 1 when collisions detected.
+        """
+        runner = CliRunner()
+        graph = _create_collision_graph()
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_COLLISION_DETECTED, (
+            f"Expected exit code {EXIT_COLLISION_DETECTED}, got {result.exit_code}"
+        )
+
+    def test_check_uses_domain_enhanced_detection(self) -> None:
+        """Test check command uses domain-enhanced collision detection.
+
+        Story 2.3: Uses detect_cross_domain_collisions() from Story 2.2.
+        """
+        runner = CliRunner()
+
+        # Create graph with clear domain labels
+        nodes = (
+            Node(id="aunt", label="Aunt Susan", type="Person", source="user-stated"),
+            Node(id="drained", label="drained", type="EnergyState", source="ai-inferred"),
+            Node(id="focused", label="focused", type="EnergyState", source="ai-inferred"),
+            Node(
+                id="presentation",
+                label="Strategy Presentation",
+                type="Activity",
+                source="user-stated",
+            ),
+        )
+        edges = (
+            Edge(source_id="aunt", target_id="drained", relationship="DRAINS", confidence=0.85),
+            Edge(
+                source_id="drained",
+                target_id="focused",
+                relationship="CONFLICTS_WITH",
+                confidence=0.80,
+            ),
+            Edge(
+                source_id="presentation",
+                target_id="focused",
+                relationship="REQUIRES",
+                confidence=0.90,
+            ),
+        )
+        graph = Graph(nodes=nodes, edges=edges)
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_COLLISION_DETECTED
+        # Should show domain labels in output
+        assert "SOCIAL" in result.output or "PROFESSIONAL" in result.output, (
+            f"Expected domain labels in output: {result.output}"
+        )
+
+    def test_check_displays_ascii_graph_with_collision_highlighting(self) -> None:
+        """Test check command shows ASCII graph with collision paths highlighted (AC #4).
+
+        Story 2.3 AC #4: When I view the ASCII graph, the collision path is
+        visually highlighted with ">>" markers.
+        """
+        runner = CliRunner()
+        graph = _create_collision_graph()
+
+        with patch(
+            "sentinel.core.engine.CogneeEngine.load",
+            return_value=graph,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_COLLISION_DETECTED
+        # Should show ASCII graph header
+        assert "Knowledge Graph" in result.output, (
+            f"Expected Knowledge Graph header in output: {result.output}"
+        )
+        # Should indicate collision highlighting
+        assert "highlighted" in result.output.lower() or ">>" in result.output, (
+            f"Expected collision highlighting indicator in output: {result.output}"
         )

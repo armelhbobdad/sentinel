@@ -9,6 +9,8 @@ from contextlib import contextmanager
 
 import click
 from rich.console import Console
+from rich.markup import escape
+from rich.panel import Panel
 from rich.status import Status
 
 from sentinel import __version__
@@ -17,14 +19,161 @@ from sentinel.core.constants import (
     EXIT_INTERNAL_ERROR,
     EXIT_SUCCESS,
     EXIT_USER_ERROR,
+    HIGH_CONFIDENCE,
+    MEDIUM_CONFIDENCE,
 )
 from sentinel.core.exceptions import IngestionError, PersistenceError
 from sentinel.core.persistence import get_graph_db_path
+from sentinel.core.types import Graph, Node, ScoredCollision, strip_domain_prefix
 from sentinel.viz import render_ascii
 
 logger = logging.getLogger(__name__)
 console = Console()
 error_console = Console(stderr=True)
+
+
+def format_collision_path(collision: ScoredCollision) -> str:
+    """Format collision path for display with Rich markup.
+
+    Args:
+        collision: The scored collision with path tuple.
+
+    Returns:
+        Rich-formatted string with arrows between elements.
+        Entities (even indices) are bold, relationships (odd indices) are dim.
+    """
+    parts = []
+    for i, element in enumerate(collision.path):
+        # Escape Rich markup in element (handles [SOCIAL], [Meeting], etc.)
+        safe_element = escape(element)
+
+        if i % 2 == 0:  # Entity (bold)
+            parts.append(f"[bold]{safe_element}[/bold]")
+        else:  # Relationship (dim)
+            parts.append(f"[dim]{safe_element}[/dim]")
+
+    return " → ".join(parts)
+
+
+def get_confidence_level(confidence: float) -> str:
+    """Classify confidence score into HIGH, MEDIUM, or LOW.
+
+    Args:
+        confidence: Confidence score between 0.0 and 1.0.
+
+    Returns:
+        "HIGH" if >= 0.8, "MEDIUM" if >= 0.5, "LOW" otherwise.
+    """
+    if confidence >= HIGH_CONFIDENCE:
+        return "HIGH"
+    elif confidence >= MEDIUM_CONFIDENCE:
+        return "MEDIUM"
+    else:
+        return "LOW"
+
+
+def extract_temporal_context(collision: ScoredCollision, graph: Graph) -> str | None:
+    """Extract temporal relationship for collision explanation.
+
+    Looks up nodes in the collision path and extracts day/time metadata
+    to generate a human-readable temporal context message.
+
+    Args:
+        collision: The scored collision to analyze.
+        graph: The graph containing full node information.
+
+    Returns:
+        Human-readable temporal context or None if no temporal data.
+    """
+    # Build node lookup from labels
+    nodes_by_label: dict[str, Node] = {}
+    for node in graph.nodes:
+        nodes_by_label[node.label] = node
+
+    # Get source and target labels (first and last entities in path)
+    # Handle domain prefixes like "[SOCIAL] Aunt Susan"
+    source_label_raw = collision.path[0]
+    target_label_raw = collision.path[-1]
+
+    # Strip domain prefix if present (e.g., "[SOCIAL] Aunt Susan" -> "Aunt Susan")
+    source_label = strip_domain_prefix(source_label_raw)
+    target_label = strip_domain_prefix(target_label_raw)
+
+    # Look up nodes
+    source_node = nodes_by_label.get(source_label)
+    target_node = nodes_by_label.get(target_label)
+
+    # Extract temporal data
+    source_day = None
+    target_day = None
+
+    if source_node:
+        source_day = source_node.metadata.get("day")
+    if target_node:
+        target_day = target_node.metadata.get("day")
+
+    # Generate context message if we have temporal data
+    if source_day and target_day:
+        return (
+            f"Your {source_day} activity may drain energy needed for {target_day}'s requirements."
+        )
+    elif source_day:
+        return f"This activity on {source_day} may impact your energy levels."
+    elif target_day:
+        return f"The affected activity is scheduled for {target_day}."
+
+    return None
+
+
+def display_collision_warning(
+    collision: ScoredCollision,
+    index: int,
+    graph: Graph,
+    target_console: Console | None = None,
+) -> None:
+    """Display a collision warning panel with path and context.
+
+    Args:
+        collision: The scored collision to display.
+        index: Collision number (1-based) for the header.
+        graph: Graph for temporal context extraction.
+        target_console: Optional Rich console (defaults to module console).
+    """
+    output_console = target_console if target_console is not None else console
+
+    # Determine severity based on confidence
+    confidence_level = get_confidence_level(collision.confidence)
+    confidence_pct = int(collision.confidence * 100)
+
+    if confidence_level == "HIGH":
+        header = f"⚠️  COLLISION DETECTED                    Confidence: {confidence_pct}%"
+        border_style = "red bold"
+    else:
+        header = f"⚡ POTENTIAL RISK                         Confidence: {confidence_pct}%"
+        border_style = "yellow"
+
+    # Format the collision path
+    formatted_path = format_collision_path(collision)
+
+    # Extract temporal context
+    temporal = extract_temporal_context(collision, graph)
+
+    # Build panel content
+    content_parts = [formatted_path]
+    if temporal:
+        content_parts.append("")
+        content_parts.append(f"📅 {temporal}")
+
+    content = "\n".join(content_parts)
+
+    # Create and display panel
+    panel = Panel(
+        content,
+        title=f"[bold]COLLISION #{index}[/bold]",
+        subtitle=header,
+        border_style=border_style,
+    )
+    output_console.print(panel)
 
 
 @contextmanager
@@ -193,8 +342,8 @@ def check(ctx: click.Context) -> None:
     from sentinel.core.engine import CogneeEngine
     from sentinel.core.exceptions import PersistenceError
     from sentinel.core.rules import (
+        detect_cross_domain_collisions,
         find_collision_paths_async,
-        score_collision,
     )
 
     debug = ctx.obj.get("debug", False)
@@ -250,16 +399,34 @@ def check(ctx: click.Context) -> None:
         if result.timed_out:
             error_console.print("[yellow]Analysis timed out. Showing partial results.[/yellow]")
 
-        # Score each collision path
-        collisions = [score_collision(p, graph) for p in result.paths]
+        # Use domain-enhanced collision detection (Story 2.2/2.3)
+        collisions = detect_cross_domain_collisions(graph)
 
         if not collisions:
             console.print("[green]✓[/green] No energy collisions detected!")
             console.print("[dim]Your schedule looks balanced.[/dim]")
             raise SystemExit(EXIT_SUCCESS)
 
-        # Story 2.3 will implement detailed display
-        console.print(f"[yellow]⚠[/yellow] Found {len(collisions)} potential collision(s).")
+        # Display each collision with formatted path and context (Story 2.3)
+        console.print()  # Blank line for visual separation
+        for i, collision in enumerate(collisions, 1):
+            display_collision_warning(collision, i, graph)
+            console.print()  # Blank line between collisions
+
+        # Show summary
+        collision_count = len(collisions)
+        plural = "s" if collision_count != 1 else ""
+        console.print(
+            f"[yellow]Found {collision_count} collision{plural} affecting your schedule.[/yellow]"
+        )
+
+        # Show ASCII graph with collision paths highlighted (AC #4)
+        collision_paths = [c.path for c in collisions]
+        console.print()
+        console.print("[bold]Knowledge Graph (collision paths highlighted with >>):[/bold]")
+        ascii_output = render_ascii(graph, collision_paths=collision_paths)
+        console.print(ascii_output, markup=False)
+
         raise SystemExit(EXIT_COLLISION_DETECTED)
 
     except PersistenceError as e:

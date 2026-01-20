@@ -9,7 +9,7 @@ import logging
 import networkx as nx
 from phart import ASCIIRenderer, NodeStyle
 
-from sentinel.core.types import Graph, Node
+from sentinel.core.types import Graph, Node, strip_domain_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -17,38 +17,52 @@ logger = logging.getLogger(__name__)
 MAX_NODES_FOR_FULL_RENDER = 50
 
 
-def _format_node_label(node: Node) -> str:
+def _format_node_label(node: Node, highlight: bool = False) -> str:
     """Format node label with source-appropriate brackets.
 
     Args:
         node: The node to format.
+        highlight: Whether to add collision highlight marker.
 
     Returns:
         Label with brackets: [label] for user-stated, (label) for ai-inferred.
+        If highlighted, adds ">>" prefix to indicate collision involvement.
     """
     if node.source == "user-stated":
-        return f"[{node.label}]"
-    return f"({node.label})"
+        base = f"[{node.label}]"
+    else:
+        base = f"({node.label})"
+
+    if highlight:
+        return f">> {base}"
+    return base
 
 
-def graph_to_networkx(graph: Graph) -> nx.DiGraph:
+def graph_to_networkx(
+    graph: Graph,
+    highlight_labels: set[str] | None = None,
+) -> nx.DiGraph:
     """Convert Sentinel Graph to NetworkX DiGraph for phart.
 
     Uses formatted labels as node IDs so phart displays styled labels.
 
     Args:
         graph: Sentinel Graph with nodes and edges.
+        highlight_labels: Optional set of node labels to highlight
+            (for collision path visualization).
 
     Returns:
         NetworkX DiGraph with nodes and edges suitable for phart rendering.
     """
     graph_nx = nx.DiGraph()
+    highlight_set = highlight_labels or set()
 
     # Map original node ID to formatted label for edge lookups
     id_to_label: dict[str, str] = {}
 
     for node in graph.nodes:
-        formatted_label = _format_node_label(node)
+        should_highlight = node.label in highlight_set
+        formatted_label = _format_node_label(node, highlight=should_highlight)
         id_to_label[node.id] = formatted_label
         graph_nx.add_node(
             formatted_label,  # Use formatted label as node ID
@@ -99,11 +113,17 @@ def _format_relationships(graph: Graph) -> str:
     return "\n".join(lines)
 
 
-def render_ascii(graph: Graph) -> str:
+def render_ascii(
+    graph: Graph,
+    collision_paths: list[tuple[str, ...]] | None = None,
+) -> str:
     """Render Graph as ASCII art using phart.
 
     Args:
         graph: Sentinel Graph to render.
+        collision_paths: Optional list of collision path tuples. Each path
+            contains alternating entity labels and relationship names.
+            Entities in these paths will be highlighted with ">>" prefix.
 
     Returns:
         ASCII art representation of the graph, or friendly message if empty.
@@ -111,6 +131,15 @@ def render_ascii(graph: Graph) -> str:
     """
     if not graph.nodes:
         return "No entities found in your schedule. Try adding more details."
+
+    # Extract entity labels from collision paths (even indices are entities)
+    highlight_labels: set[str] = set()
+    if collision_paths:
+        for path in collision_paths:
+            for i, element in enumerate(path):
+                if i % 2 == 0:  # Entity at even index
+                    # Strip domain prefix if present (e.g., "[SOCIAL] Aunt Susan" -> "Aunt Susan")
+                    highlight_labels.add(strip_domain_prefix(element))
 
     try:
         parts: list[str] = []
@@ -122,7 +151,7 @@ def render_ascii(graph: Graph) -> str:
             )
             parts.append("")
 
-        nx_graph = graph_to_networkx(graph)
+        nx_graph = graph_to_networkx(graph, highlight_labels=highlight_labels)
 
         # Use MINIMAL style since labels already have brackets
         renderer = ASCIIRenderer(nx_graph, node_style=NodeStyle.MINIMAL)

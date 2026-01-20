@@ -95,6 +95,36 @@ class ScoredCollision:
     source_breakdown: Mapping[str, int] = field(default_factory=dict)
 
 
+def strip_domain_prefix(label: str) -> str:
+    """Strip domain prefix from a path label.
+
+    Domain prefixes like "[SOCIAL] Aunt Susan" or "[PROFESSIONAL]Meeting"
+    are added by collision detection to show domain transitions.
+    This function removes them to get the bare entity label.
+
+    Args:
+        label: A path element that may contain a domain prefix.
+
+    Returns:
+        The label without the domain prefix, with leading whitespace stripped.
+        Returns the original label if no domain prefix is found.
+
+    Examples:
+        >>> strip_domain_prefix("[SOCIAL] Aunt Susan")
+        'Aunt Susan'
+        >>> strip_domain_prefix("[PROFESSIONAL]Meeting")
+        'Meeting'
+        >>> strip_domain_prefix("Regular Label")
+        'Regular Label'
+    """
+    if label.startswith("["):
+        bracket_end = label.find("]")
+        if bracket_end != -1:
+            # Handle both "[DOMAIN] name" and "[DOMAIN]name" formats
+            return label[bracket_end + 1 :].lstrip()
+    return label
+
+
 @dataclass(frozen=True)
 class Correction:
     """A user correction to the graph.
