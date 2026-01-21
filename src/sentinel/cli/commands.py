@@ -23,8 +23,9 @@ from sentinel.core.constants import (
     MEDIUM_CONFIDENCE,
 )
 from sentinel.core.exceptions import IngestionError, PersistenceError
-from sentinel.core.persistence import get_graph_db_path
-from sentinel.core.types import Graph, Node, ScoredCollision, strip_domain_prefix
+from sentinel.core.matching import format_node_suggestions, fuzzy_find_node
+from sentinel.core.persistence import CorrectionStore, get_graph_db_path
+from sentinel.core.types import Correction, Graph, Node, ScoredCollision, strip_domain_prefix
 from sentinel.viz import render_ascii
 
 logger = logging.getLogger(__name__)
@@ -430,7 +431,8 @@ def check(ctx: click.Context, verbose: bool) -> None:
 
     try:
         engine = CogneeEngine()
-        graph = engine.load()
+        # Apply corrections when loading (AC: #5 - deleted nodes filtered)
+        graph = engine.load(apply_corrections=True)
 
         if graph is None:
             error_console.print("[yellow]No schedule data found.[/yellow]")
@@ -542,6 +544,176 @@ def check(ctx: click.Context, verbose: bool) -> None:
     except Exception:
         logger.exception("Unhandled exception in check command")
         error_console.print("[red]Unexpected error during check[/red]")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+
+
+@main.group()
+@click.pass_context
+def correct(ctx: click.Context) -> None:
+    """Manage corrections to AI-inferred nodes.
+
+    Use these commands to delete incorrect AI-inferred nodes from your
+    knowledge graph or list existing corrections.
+
+    Example: sentinel correct delete "Drained"
+    Example: sentinel correct list
+    """
+    pass  # Group command doesn't do anything itself
+
+
+@correct.command(name="delete")
+@click.argument("node_label")
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip confirmation prompt.",
+)
+@click.pass_context
+def correct_delete(ctx: click.Context, node_label: str, yes: bool) -> None:
+    """Delete an AI-inferred node from the knowledge graph.
+
+    NODE_LABEL is the label of the node to delete (supports fuzzy matching).
+
+    Only AI-inferred nodes can be deleted. User-stated nodes from your
+    original schedule cannot be modified through this command.
+
+    Examples:
+        sentinel correct delete "Drained"           # Exact match
+        sentinel correct delete "Drainned" --yes    # Fuzzy match, skip confirmation
+    """
+    from sentinel.core.engine import CogneeEngine
+
+    try:
+        engine = CogneeEngine()
+        graph = engine.load()
+
+        if graph is None:
+            error_console.print("[yellow]No schedule data found.[/yellow]")
+            error_console.print("Run [bold]sentinel paste[/bold] first to add your schedule.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Find the node using fuzzy matching (ai-inferred only)
+        result = fuzzy_find_node(graph, node_label, ai_inferred_only=True)
+
+        if result.match is None:
+            if result.suggestions:
+                error_console.print(f"[red]Error:[/red] Node '{node_label}' not found.")
+                error_console.print()
+                error_console.print(format_node_suggestions(result.suggestions))
+            else:
+                error_console.print("[red]Error:[/red] No AI-inferred nodes found.")
+                error_console.print(
+                    "[dim]Only AI-inferred nodes can be deleted. "
+                    "User-stated nodes from your schedule cannot be modified.[/dim]"
+                )
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # If fuzzy match (not exact), ask for confirmation
+        if not result.is_exact and not yes:
+            console.print(f"[yellow]Did you mean '[bold]{result.match.label}[/bold]'?[/yellow]")
+            if not click.confirm("Delete this node?"):
+                console.print("[dim]Aborted.[/dim]")
+                raise SystemExit(EXIT_SUCCESS)
+
+        # For exact match without --yes, still confirm
+        if result.is_exact and not yes:
+            console.print(f"About to delete node: [bold]{result.match.label}[/bold]")
+            console.print(f"[dim]ID: {result.match.id}[/dim]")
+            console.print(f"[dim]Type: {result.match.type}[/dim]")
+            if not click.confirm("Are you sure?"):
+                console.print("[dim]Aborted.[/dim]")
+                raise SystemExit(EXIT_SUCCESS)
+
+        # Apply the correction
+        correction = Correction(node_id=result.match.id, action="delete")
+
+        try:
+            mutated_graph = engine.mutate(graph, correction)
+        except ValueError as e:
+            error_console.print(f"[red]Error:[/red] {e}")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Persist the correction
+        store = CorrectionStore()
+        store.add_correction(
+            correction,
+            reason=f"User deleted via CLI: {result.match.label}",
+        )
+
+        # Persist the mutated graph
+        engine.persist(mutated_graph)
+
+        console.print(f"[green]✓[/green] Deleted node '[bold]{result.match.label}[/bold]'")
+
+        # Show summary
+        removed_edges = len(graph.edges) - len(mutated_graph.edges)
+        if removed_edges > 0:
+            console.print(f"[dim]Removed {removed_edges} connected edge(s).[/dim]")
+
+        raise SystemExit(EXIT_SUCCESS)
+
+    except PersistenceError as e:
+        logger.exception("Failed to load/save graph")
+        error_console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+    except SystemExit:
+        raise
+    except Exception:
+        logger.exception("Unhandled exception in correct delete command")
+        error_console.print("[red]Unexpected error[/red]")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+
+
+@correct.command(name="list")
+@click.pass_context
+def correct_list(ctx: click.Context) -> None:
+    """List all corrections made to the knowledge graph.
+
+    Shows deleted nodes and any other corrections that have been applied.
+
+    Example: sentinel correct list
+    """
+    try:
+        store = CorrectionStore()
+        records = store.load_records()
+
+        if not records:
+            console.print("[dim]No corrections have been made yet.[/dim]")
+            console.print()
+            console.print(
+                "Use [bold]sentinel correct delete <node>[/bold] "
+                "to delete incorrectly inferred nodes."
+            )
+            raise SystemExit(EXIT_SUCCESS)
+
+        console.print(f"[bold]Corrections ({len(records)}):[/bold]")
+        console.print()
+
+        for i, record in enumerate(records, 1):
+            action = record.get("action", "unknown")
+            action_display = action.upper()
+            if action == "delete":
+                action_display = "[red]DELETE[/red]"
+
+            node_id = record.get("node_id", "unknown")
+            timestamp = record.get("timestamp", "")
+
+            # Format timestamp for display (show date only for brevity)
+            time_display = ""
+            if timestamp:
+                # Parse ISO format and show just the date
+                time_display = f" [dim]({timestamp[:10]})[/dim]"
+
+            console.print(f"  {i}. {action_display}: {node_id}{time_display}")
+
+        raise SystemExit(EXIT_SUCCESS)
+
+    except SystemExit:
+        raise
+    except Exception:
+        logger.exception("Unhandled exception in correct list command")
+        error_console.print("[red]Unexpected error[/red]")
         raise SystemExit(EXIT_INTERNAL_ERROR)
 
 

@@ -522,8 +522,12 @@ class GraphEngine(Protocol):
         """
         ...
 
-    def load(self) -> Graph | None:
+    def load(self, apply_corrections: bool = False) -> Graph | None:
         """Load persisted graph from storage.
+
+        Args:
+            apply_corrections: If True, apply stored corrections to filter
+                               out deleted nodes and their edges.
 
         Returns:
             Loaded graph, or None if no graph exists.
@@ -1207,6 +1211,9 @@ class CogneeEngine:
     def mutate(self, graph: Graph, correction: Correction) -> Graph:
         """Apply a correction to the graph.
 
+        Supports 'delete' action which removes the node and cascades
+        removal to all connected edges. User-stated nodes cannot be deleted.
+
         Args:
             graph: The graph to mutate.
             correction: The correction to apply.
@@ -1215,9 +1222,44 @@ class CogneeEngine:
             New graph with the correction applied.
 
         Raises:
-            NotImplementedError: This is a stub implementation.
+            KeyError: If the node doesn't exist in the graph.
+            ValueError: If trying to delete a user-stated node,
+                       or if the action is not supported.
         """
-        raise NotImplementedError("CogneeEngine.mutate not yet implemented")
+        # Find the node to mutate
+        target_node = None
+        for node in graph.nodes:
+            if node.id == correction.node_id:
+                target_node = node
+                break
+
+        if target_node is None:
+            raise KeyError(f"Node '{correction.node_id}' not found in graph")
+
+        if correction.action == "delete":
+            # Cannot delete user-stated nodes (AC: #2)
+            if target_node.source == "user-stated":
+                raise ValueError(
+                    f"Cannot delete user-stated node '{target_node.label}'. "
+                    "To modify your schedule, use `sentinel paste` to re-ingest."
+                )
+
+            # Remove the node
+            new_nodes = tuple(n for n in graph.nodes if n.id != correction.node_id)
+
+            # Cascade removal of all edges connected to this node (AC: #3)
+            new_edges = tuple(
+                e
+                for e in graph.edges
+                if e.source_id != correction.node_id and e.target_id != correction.node_id
+            )
+
+            return Graph(nodes=new_nodes, edges=new_edges)
+
+        else:
+            raise ValueError(
+                f"Unknown correction action '{correction.action}'. Supported actions: delete"
+            )
 
     def persist(self, graph: Graph) -> None:
         """Persist graph to JSON file.
@@ -1290,8 +1332,12 @@ class CogneeEngine:
             "metadata": dict(edge.metadata) if edge.metadata else {},
         }
 
-    def load(self) -> Graph | None:
+    def load(self, apply_corrections: bool = False) -> Graph | None:
         """Load persisted graph from JSON file.
+
+        Args:
+            apply_corrections: If True, apply stored corrections to filter
+                               out deleted nodes and their edges (AC: #5).
 
         Returns:
             Graph if successfully loaded, None if no graph.db file exists.
@@ -1311,7 +1357,27 @@ class CogneeEngine:
             nodes = tuple(self._dict_to_node(n) for n in data.get("nodes", []))
             edges = tuple(self._dict_to_edge(e) for e in data.get("edges", []))
 
-            return Graph(nodes=nodes, edges=edges)
+            graph = Graph(nodes=nodes, edges=edges)
+
+            # Apply corrections if requested (AC: #5)
+            if apply_corrections:
+                from sentinel.core.persistence import CorrectionStore
+
+                store = CorrectionStore()
+                deleted_ids = store.get_deleted_node_ids()
+
+                if deleted_ids:
+                    # Filter out deleted nodes
+                    filtered_nodes = tuple(n for n in graph.nodes if n.id not in deleted_ids)
+                    # Filter out edges connected to deleted nodes
+                    filtered_edges = tuple(
+                        e
+                        for e in graph.edges
+                        if e.source_id not in deleted_ids and e.target_id not in deleted_ids
+                    )
+                    graph = Graph(nodes=filtered_nodes, edges=filtered_edges)
+
+            return graph
 
         except json.JSONDecodeError as e:
             raise PersistenceError(

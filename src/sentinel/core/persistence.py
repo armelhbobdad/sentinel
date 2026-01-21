@@ -5,8 +5,15 @@ All data is stored in ~/.local/share/sentinel/ by default, respecting
 the XDG_DATA_HOME environment variable when set.
 """
 
+import json
+import logging
 import os
+from datetime import UTC, datetime
 from pathlib import Path
+
+from sentinel.core.types import Correction
+
+logger = logging.getLogger(__name__)
 
 
 def get_xdg_data_home() -> Path:
@@ -49,3 +56,236 @@ def ensure_data_directory() -> Path:
     # Set permissions to owner only (700)
     data_dir.chmod(0o700)
     return data_dir
+
+
+def get_corrections_path() -> Path:
+    """Get path to corrections file.
+
+    Returns:
+        Path to corrections.json file within Sentinel's data directory.
+    """
+    return get_xdg_data_home() / "corrections.json"
+
+
+class CorrectionStore:
+    """Persistence layer for user corrections to the graph.
+
+    Manages loading, saving, and adding corrections to a JSON file.
+    Uses atomic write pattern (temp file + rename) to prevent corruption.
+
+    Corrections file schema (version 1.0):
+    {
+        "version": "1.0",
+        "corrections": [
+            {
+                "node_id": "energystate-drained",
+                "action": "delete",
+                "new_value": null,
+                "timestamp": "2026-01-21T15:30:00Z",
+                "reason": "User correction: node incorrectly inferred"
+            }
+        ]
+    }
+    """
+
+    def __init__(self) -> None:
+        """Initialize CorrectionStore."""
+        self._corrections: list[Correction] = []
+        self._loaded = False
+
+    def load(self) -> list[Correction]:
+        """Load corrections from the corrections file.
+
+        Returns:
+            List of corrections. Empty list if file doesn't exist or is corrupted.
+        """
+        corrections_path = get_corrections_path()
+
+        if not corrections_path.exists():
+            self._corrections = []
+            self._loaded = True
+            return []
+
+        try:
+            with open(corrections_path, encoding="utf-8") as f:
+                data = json.load(f)
+
+            corrections = []
+            for item in data.get("corrections", []):
+                corrections.append(
+                    Correction(
+                        node_id=item["node_id"],
+                        action=item["action"],
+                        new_value=item.get("new_value"),
+                    )
+                )
+
+            self._corrections = corrections
+            self._loaded = True
+            return corrections
+
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            # Graceful degradation: return empty list on corrupted file
+            logger.warning("Corrections file corrupted, ignoring: %s", e)
+            self._corrections = []
+            self._loaded = True
+            return []
+
+    def save(self, corrections: list[Correction]) -> None:
+        """Save corrections to the corrections file.
+
+        Uses atomic write (temp file + rename) to prevent corruption.
+
+        Args:
+            corrections: List of corrections to save.
+        """
+        ensure_data_directory()
+        corrections_path = get_corrections_path()
+
+        # Load existing data to preserve timestamps and reasons
+        existing_data: dict[str, dict] = {}
+        if corrections_path.exists():
+            try:
+                with open(corrections_path, encoding="utf-8") as f:
+                    data = json.load(f)
+                for item in data.get("corrections", []):
+                    existing_data[item["node_id"]] = item
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass  # Ignore corrupted existing file
+
+        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+        correction_records = []
+        for correction in corrections:
+            # Preserve existing timestamp and reason if available
+            existing = existing_data.get(correction.node_id, {})
+            record = {
+                "node_id": correction.node_id,
+                "action": correction.action,
+                "new_value": correction.new_value,
+                "timestamp": existing.get("timestamp", now),
+                "reason": existing.get("reason", ""),
+            }
+            correction_records.append(record)
+
+        data = {
+            "version": "1.0",
+            "corrections": correction_records,
+        }
+
+        # Atomic write: write to temp, then rename
+        temp_path = corrections_path.with_suffix(".tmp")
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            temp_path.replace(corrections_path)  # Atomic on POSIX
+        finally:
+            # Clean up temp file if it still exists
+            try:
+                if temp_path.exists():
+                    temp_path.unlink()
+            except OSError:
+                pass  # Best effort cleanup
+
+        self._corrections = corrections
+
+    def add_correction(self, correction: Correction, reason: str = "") -> None:
+        """Add a new correction and persist immediately.
+
+        Args:
+            correction: The correction to add.
+            reason: Human-readable reason for the correction.
+        """
+        # Ensure we have current state loaded
+        if not self._loaded:
+            self.load()
+
+        # Add the new correction
+        self._corrections.append(correction)
+
+        # Persist with the new reason
+        ensure_data_directory()
+        corrections_path = get_corrections_path()
+
+        # Load existing data to preserve other timestamps
+        existing_data: dict[str, dict] = {}
+        if corrections_path.exists():
+            try:
+                with open(corrections_path, encoding="utf-8") as f:
+                    data = json.load(f)
+                for item in data.get("corrections", []):
+                    existing_data[item["node_id"]] = item
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass
+
+        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+        correction_records = []
+        for corr in self._corrections:
+            existing = existing_data.get(corr.node_id, {})
+            # Use the new reason for the newly added correction
+            if corr.node_id == correction.node_id and corr is correction:
+                record = {
+                    "node_id": corr.node_id,
+                    "action": corr.action,
+                    "new_value": corr.new_value,
+                    "timestamp": now,
+                    "reason": reason,
+                }
+            else:
+                record = {
+                    "node_id": corr.node_id,
+                    "action": corr.action,
+                    "new_value": corr.new_value,
+                    "timestamp": existing.get("timestamp", now),
+                    "reason": existing.get("reason", ""),
+                }
+            correction_records.append(record)
+
+        data = {
+            "version": "1.0",
+            "corrections": correction_records,
+        }
+
+        # Atomic write
+        temp_path = corrections_path.with_suffix(".tmp")
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            temp_path.replace(corrections_path)
+        finally:
+            try:
+                if temp_path.exists():
+                    temp_path.unlink()
+            except OSError:
+                pass
+
+    def get_deleted_node_ids(self) -> set[str]:
+        """Get set of node IDs that have been deleted.
+
+        Returns:
+            Set of node IDs with action="delete".
+        """
+        if not self._loaded:
+            self.load()
+
+        return {c.node_id for c in self._corrections if c.action == "delete"}
+
+    def load_records(self) -> list[dict]:
+        """Load corrections with full metadata including timestamps.
+
+        Returns:
+            List of correction records as dicts with node_id, action,
+            new_value, timestamp, and reason fields.
+        """
+        corrections_path = get_corrections_path()
+
+        if not corrections_path.exists():
+            return []
+
+        try:
+            with open(corrections_path, encoding="utf-8") as f:
+                data = json.load(f)
+            return data.get("corrections", [])
+        except (json.JSONDecodeError, KeyError, TypeError):
+            return []

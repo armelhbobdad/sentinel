@@ -103,16 +103,21 @@ async def test_cognee_engine_get_neighbors_raises_not_implemented() -> None:
         await engine.get_neighbors("node-1")
 
 
-def test_cognee_engine_mutate_raises_not_implemented() -> None:
-    """CogneeEngine.mutate should raise NotImplementedError (stub)."""
+def test_cognee_engine_mutate_is_implemented() -> None:
+    """CogneeEngine.mutate should be implemented (Story 3.1)."""
     from sentinel.core.engine import CogneeEngine
-    from sentinel.core.types import Correction, Graph
+    from sentinel.core.types import Correction, Graph, Node
 
     engine = CogneeEngine()
-    graph = Graph(nodes=(), edges=())
+    # Create a graph with an AI-inferred node
+    graph = Graph(
+        nodes=(Node(id="node-1", label="Test Node", type="EnergyState", source="ai-inferred"),),
+        edges=(),
+    )
     correction = Correction(node_id="node-1", action="delete", new_value=None)
-    with pytest.raises(NotImplementedError):
-        engine.mutate(graph, correction)
+    # Should not raise - mutate() is now implemented
+    result = engine.mutate(graph, correction)
+    assert len(result.nodes) == 0, "Node should be deleted"
 
 
 def test_cognee_engine_persist_is_implemented(tmp_path) -> None:
