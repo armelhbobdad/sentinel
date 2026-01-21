@@ -46,7 +46,7 @@ uv run sentinel --help
 uv run sentinel --version
 ```
 
-### Analyzing Your Schedule
+### Analyzing Your Schedule (paste)
 
 Use the `paste` command to analyze schedule text and build a knowledge graph:
 
@@ -89,6 +89,44 @@ Relationships:
 Legend: [name] = user-stated, (name) = AI-inferred
 ```
 
+### Detecting Collisions (check)
+
+Use the `check` command to detect energy collisions in your schedule:
+
+```bash
+# Run collision detection
+uv run sentinel check
+
+# Show low-confidence collisions too
+uv run sentinel check --verbose
+
+# Filter by minimum confidence (0.0-1.0)
+uv run sentinel check --min-confidence 0.7
+```
+
+**Example Output:**
+
+```
+Detecting collisions...
+Analyzing 12 relationships...
+
+⚠️  COLLISION DETECTED (confidence: 0.85)
+
+[Dinner with Aunt Susan] → [drained] → [low_focus] → [Monday Presentation]
+
+Your Sunday dinner historically precedes energy dips.
+Monday's presentation requires high cognitive load.
+Risk: Entering high-stakes meeting already depleted.
+
+─────────────────────────────────────────────────
+✗ 1 collision detected
+```
+
+**Exit Codes:**
+- `0` - Success, no collisions detected
+- `1` - Success, collisions detected (warnings present)
+- `2` - Error (graph not found, processing failure)
+
 ### Debug Mode
 
 For troubleshooting or seeing what Cognee does behind the scenes:
@@ -108,7 +146,7 @@ Debug mode shows Cognee's internal pipeline progress, entity extraction details,
 ### Running Tests
 
 ```bash
-# Run all tests
+# Run all tests (excludes live API tests by default)
 uv run pytest tests/ -v
 
 # Run fast unit tests only
@@ -116,7 +154,23 @@ uv run pytest tests/unit/ -v
 
 # Run integration tests (MockEngine, fixtures)
 uv run pytest tests/integration/ -v
+
+# Run live API tests (requires API keys in .env)
+uv run pytest tests/live/ -v -m live
+
+# Run everything including live tests
+uv run pytest tests/ -v -m ""
 ```
+
+**Test Categories:**
+
+| Category | Location | Requires API Key | Description |
+|----------|----------|------------------|-------------|
+| Unit | `tests/unit/` | No | Fast, isolated function tests |
+| Integration | `tests/integration/` | No | MockEngine with fixtures |
+| Live | `tests/live/` | Yes | Real Cognee API validation |
+
+**Live Tests** verify that the system works correctly with the actual Cognee API, catching issues that mocked tests might miss (like LLM output variability).
 
 ### Code Quality
 
@@ -157,9 +211,11 @@ sentinel/
 │       ├── __init__.py         # Package init with version
 │       ├── __main__.py         # Entry point for python -m sentinel
 │       ├── core/
-│       │   ├── constants.py    # Exit codes, thresholds
+│       │   ├── constants.py    # Exit codes, thresholds, fuzzy matching config
 │       │   ├── types.py        # Graph, Node, Edge, ScoredCollision
-│       │   ├── engine.py       # GraphEngine protocol + CogneeEngine
+│       │   ├── engine.py       # GraphEngine protocol + CogneeEngine + 3-tier mapping
+│       │   ├── rules.py        # Collision detection logic (BFS traversal)
+│       │   ├── consolidation.py # Semantic node consolidation (RapidFuzz)
 │       │   ├── persistence.py  # Graph persistence (JSON-based)
 │       │   └── exceptions.py   # Custom exception classes
 │       ├── cli/
@@ -172,7 +228,8 @@ sentinel/
 │   ├── fixtures/
 │   │   └── schedules/          # Test schedule files
 │   ├── unit/                   # Fast unit tests
-│   └── integration/            # MockEngine and fixture tests
+│   ├── integration/            # MockEngine and fixture tests
+│   └── live/                   # Live API tests (requires API keys)
 ├── pyproject.toml              # Project configuration
 ├── lefthook.yml                # Pre-commit hook configuration
 └── README.md
@@ -182,7 +239,10 @@ sentinel/
 
 Sentinel follows a modular architecture:
 
-- **Core Module**: Contains types, constants, persistence, and the GraphEngine protocol. Never imports from CLI or visualization modules.
+- **Core Module**: Contains types, constants, persistence, collision detection, and the GraphEngine protocol. Never imports from CLI or visualization modules.
+  - `engine.py` - GraphEngine protocol with 3-tier relation type mapping
+  - `rules.py` - BFS-based collision detection logic
+  - `consolidation.py` - Semantic node merging using RapidFuzz
 - **CLI Module**: Click-based command-line interface with Rich terminal styling
 - **Viz Module**: ASCII graph visualization using phart library. Imports only types from core.
 - **GraphEngine Protocol**: Async interface for graph operations, enabling both mock and real implementations
@@ -193,6 +253,14 @@ core/  ←── viz/ (types only)
   └── cli/ ─┘
 ```
 
+### LLM Integration
+
+Sentinel handles LLM output variability through a 3-layer approach:
+
+1. **Custom Extraction Prompt**: Guides Cognee to produce energy-domain relationships
+2. **3-Tier Relation Mapping**: Exact → Keyword → Fuzzy matching (RapidFuzz)
+3. **Semantic Node Consolidation**: Merges equivalent nodes like "drained"/"exhausted"
+
 ## Technology Stack
 
 | Tech         | Purpose                                 |
@@ -202,6 +270,7 @@ core/  ←── viz/ (types only)
 | Click        | CLI framework                           |
 | Rich         | Terminal styling                        |
 | Cognee       | Knowledge graph + LLM entity extraction |
+| RapidFuzz    | Fuzzy string matching for LLM output normalization |
 | phart        | ASCII graph visualization               |
 | NetworkX     | Graph data structure (phart dependency) |
 | pytest       | Testing                                 |

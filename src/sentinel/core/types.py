@@ -4,11 +4,26 @@ These types define the graph schema and collision detection structures.
 All types are immutable dataclasses for thread safety and predictability.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from typing import Any, Literal
 
 # Source types for tracking provenance
 NodeSource = Literal["user-stated", "ai-inferred"]
+
+
+class Domain(Enum):
+    """Life domains for collision classification.
+
+    Used to identify when energy collisions cross life boundaries
+    (e.g., social activities impacting professional requirements).
+    """
+
+    SOCIAL = auto()  # Family, friends, social events
+    PROFESSIONAL = auto()  # Work, meetings, career activities
+    HEALTH = auto()  # Exercise, medical, wellness
+    PERSONAL = auto()  # Default/ambiguous
 
 
 @dataclass(frozen=True)
@@ -70,14 +85,44 @@ class ScoredCollision:
     along with confidence scores and source breakdown.
 
     Attributes:
-        path: The collision path as a list of node/edge labels.
+        path: The collision path as a tuple of node/edge labels (immutable).
         confidence: Overall confidence score for this collision (0.0 to 1.0).
-        source_breakdown: Breakdown of confidence by source type.
+        source_breakdown: Breakdown of source counts (ai_inferred, user_stated).
     """
 
-    path: list[str]
+    path: tuple[str, ...]
     confidence: float
-    source_breakdown: dict[str, float] = field(default_factory=dict)
+    source_breakdown: Mapping[str, int] = field(default_factory=dict)
+
+
+def strip_domain_prefix(label: str) -> str:
+    """Strip domain prefix from a path label.
+
+    Domain prefixes like "[SOCIAL] Aunt Susan" or "[PROFESSIONAL]Meeting"
+    are added by collision detection to show domain transitions.
+    This function removes them to get the bare entity label.
+
+    Args:
+        label: A path element that may contain a domain prefix.
+
+    Returns:
+        The label without the domain prefix, with leading whitespace stripped.
+        Returns the original label if no domain prefix is found.
+
+    Examples:
+        >>> strip_domain_prefix("[SOCIAL] Aunt Susan")
+        'Aunt Susan'
+        >>> strip_domain_prefix("[PROFESSIONAL]Meeting")
+        'Meeting'
+        >>> strip_domain_prefix("Regular Label")
+        'Regular Label'
+    """
+    if label.startswith("["):
+        bracket_end = label.find("]")
+        if bracket_end != -1:
+            # Handle both "[DOMAIN] name" and "[DOMAIN]name" formats
+            return label[bracket_end + 1 :].lstrip()
+    return label
 
 
 @dataclass(frozen=True)

@@ -81,20 +81,20 @@ def test_scored_collision_dataclass_has_required_fields() -> None:
     from sentinel.core.types import ScoredCollision
 
     collision = ScoredCollision(
-        path=["Aunt Susan", "DRAINS", "LowEnergy", "CONFLICTS_WITH", "Presentation"],
+        path=("Aunt Susan", "DRAINS", "LowEnergy", "CONFLICTS_WITH", "Presentation"),
         confidence=0.75,
-        source_breakdown={"user-stated": 0.6, "ai-inferred": 0.4},
+        source_breakdown={"user_stated": 3, "ai_inferred": 2},
     )
 
-    assert collision.path == [
+    assert collision.path == (
         "Aunt Susan",
         "DRAINS",
         "LowEnergy",
         "CONFLICTS_WITH",
         "Presentation",
-    ], f"Expected path, got {collision.path}"
+    ), f"Expected path, got {collision.path}"
     assert collision.confidence == 0.75, f"Expected confidence 0.75, got {collision.confidence}"
-    assert collision.source_breakdown == {"user-stated": 0.6, "ai-inferred": 0.4}
+    assert collision.source_breakdown == {"user_stated": 3, "ai_inferred": 2}
 
 
 def test_correction_dataclass_has_required_fields() -> None:

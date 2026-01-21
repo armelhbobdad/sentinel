@@ -25,6 +25,16 @@ from sentinel.core.types import (
     ScoredCollision,
 )
 
+# RapidFuzz import with graceful degradation
+try:
+    from rapidfuzz import fuzz, process
+
+    RAPIDFUZZ_AVAILABLE = True
+except ImportError:
+    RAPIDFUZZ_AVAILABLE = False
+    fuzz = None  # type: ignore[assignment]
+    process = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 # Valid edge types allowed in Sentinel graphs (AC #5)
@@ -88,6 +98,9 @@ RELATION_TYPE_MAP: dict[str, str] = {
     "happens_on": "SCHEDULED_AT",
     "at": "SCHEDULED_AT",
     "on": "SCHEDULED_AT",
+    # BUG-002: Additional SCHEDULED_AT mappings (AC #3)
+    "occurs_on": "SCHEDULED_AT",
+    "happens_at": "SCHEDULED_AT",
     # DRAINS mappings
     "drains": "DRAINS",
     "depletes": "DRAINS",
@@ -96,12 +109,33 @@ RELATION_TYPE_MAP: dict[str, str] = {
     "fatigues": "DRAINS",
     "causes_fatigue": "DRAINS",
     "energy_drain": "DRAINS",
+    # BUG-001: Cognee LLM-generated DRAINS variants
+    "drains_energy": "DRAINS",
+    "is_emotionally_draining": "DRAINS",
+    "emotionally_draining": "DRAINS",
+    "causes_exhaustion": "DRAINS",
+    "energy_draining": "DRAINS",
+    # BUG-002: Additional DRAINS mappings for causal relations (AC #1, #2)
+    # Note: "causes" is semantically broad but maps to DRAINS in Sentinel's
+    # energy-focused domain when target involves energy/exhaustion concepts.
+    "causes": "DRAINS",
+    "negatively_impacts": "DRAINS",
+    "negatively_affects": "DRAINS",
+    "leads_to_exhaustion": "DRAINS",
+    "results_in_fatigue": "DRAINS",
+    "impacts_energy": "DRAINS",
     # REQUIRES mappings
     "requires": "REQUIRES",
     "needs": "REQUIRES",
     "demands": "REQUIRES",
     "depends_on": "REQUIRES",
     "prerequisite": "REQUIRES",
+    # BUG-001: Cognee LLM-generated REQUIRES variants
+    "requires_high_focus": "REQUIRES",
+    "needs_to_be_well_rested_for": "REQUIRES",
+    "requires_focus": "REQUIRES",
+    "needs_energy": "REQUIRES",
+    "requires_energy": "REQUIRES",
     # CONFLICTS_WITH mappings
     "conflicts": "CONFLICTS_WITH",
     "conflicts_with": "CONFLICTS_WITH",
@@ -121,7 +155,301 @@ RELATION_TYPE_MAP: dict[str, str] = {
     "has_note": "INVOLVES",  # Event has a note about context/feelings
     "about": "INVOLVES",  # Relation is about a topic
     "involves_person": "INVOLVES",  # Event involves a person
+    # BUG-001: Cognee LLM-generated INVOLVES variants
+    "attends": "INVOLVES",
+    "presented_to": "INVOLVES",
+    # BUG-002: Additional INVOLVES mappings (AC #4)
+    "has_characteristic": "INVOLVES",
+    "characterized_by": "INVOLVES",
 }
+
+# Semantic keywords for Tier 2 keyword matching (Story 2-6)
+# Uses word stems to match variations (e.g., "deplet" matches "depletes", "depleted", "depletion")
+SEMANTIC_KEYWORDS: dict[str, list[str]] = {
+    "DRAINS": [
+        "drain",
+        "exhaust",
+        "deplet",
+        "fatigue",
+        "tire",
+        "sap",
+        "wear",
+        "stress",
+        "burden",
+        "overwhelm",
+        "tax",
+    ],
+    "REQUIRES": [
+        "require",
+        "need",
+        "demand",
+        "depend",
+        "necessitat",
+        "essential",
+        "must",
+        "prerequisite",
+    ],
+    "CONFLICTS_WITH": [
+        "conflict",
+        "clash",
+        "contradict",
+        "interfer",
+        "oppos",
+        "threaten",
+        "impair",
+        "hinder",
+        "block",
+        "prevent",
+        "incompatible",
+    ],
+    "SCHEDULED_AT": [
+        "schedul",
+        "occur",
+        "happen",
+        "preced",
+        "follow",
+        "before",
+        "after",
+        "during",
+        "time",
+    ],
+    "INVOLVES": [
+        "involve",
+        "include",
+        "contain",
+        "feature",
+        "characteriz",
+        "present",
+        "has",
+        "with",
+        "about",
+        "relat",
+        "associat",
+        "contribut",
+        "affect",
+        "impact",
+    ],
+}
+
+
+# Fuzzy candidate phrases for Tier 3 RapidFuzz matching (Story 2-6)
+# Curated natural language phrases for semantic similarity scoring
+FUZZY_CANDIDATES: dict[str, list[str]] = {
+    "DRAINS": [
+        "drains",
+        "drains energy",
+        "emotionally draining",
+        "causes drain",
+        "energy drain",
+        "depletes",
+        "exhausts",
+        "tires out",
+        "fatigues",
+        "wears out",
+        "stresses",
+        "causes exhaustion",
+        "leads to fatigue",
+        "reduces energy",
+        "saps energy",
+    ],
+    "REQUIRES": [
+        "requires",
+        "needs",
+        "demands",
+        "depends on",
+        "necessitates",
+        "needed by",
+        "required by",
+        "prerequisite for",
+        "essential for",
+        "must have",
+    ],
+    "CONFLICTS_WITH": [
+        "conflicts with",
+        "clashes with",
+        "contradicts",
+        "interferes with",
+        "opposes",
+        "threatens",
+        "impairs",
+        "hinders",
+        "blocks",
+        "prevents",
+        "incompatible with",
+        "at odds with",
+        "undermines",
+        "negatively impacts",
+    ],
+    "SCHEDULED_AT": [
+        "scheduled at",
+        "occurs on",
+        "happens at",
+        "takes place",
+        "precedes",
+        "follows",
+        "before",
+        "after",
+        "during",
+        "at time",
+        "on date",
+    ],
+    "INVOLVES": [
+        "involves",
+        "includes",
+        "contains",
+        "features",
+        "characterized by",
+        "presented by",
+        "has characteristic",
+        "relates to",
+        "associated with",
+        "contributes to",
+        "affects",
+        "impacts",
+        "connected to",
+        "linked to",
+        "part of",
+    ],
+}
+
+# Default fuzzy matching threshold (0-100)
+DEFAULT_FUZZY_THRESHOLD: int = 50
+
+# Custom extraction prompt for energy-domain knowledge graphs (Story 2-7)
+# Guides Cognee's LLM to create correct graph topology for collision detection.
+# Token count: ~1100 tokens (well under 2000 token limit for optimal performance)
+SENTINEL_EXTRACTION_PROMPT: str = """\
+You are extracting a PERSONAL ENERGY knowledge graph for schedule conflict detection.
+
+**DOMAIN**: Personal scheduling, energy management, activity conflicts.
+
+**CRITICAL RULE**: When an activity DRAINS energy AND another activity REQUIRES
+that same energy type, you MUST create a CONFLICTS_WITH edge between them.
+This is the core pattern we need to detect.
+
+**REQUIRED RELATIONSHIP TYPES** (use ONLY these exact names):
+- DRAINS: Activity depletes energy/focus/motivation
+  (e.g., "exhausting dinner" DRAINS "emotional_energy")
+- REQUIRES: Activity needs energy/focus/resources
+  (e.g., "presentation" REQUIRES "mental_focus")
+- CONFLICTS_WITH: Connect energy states to activities that need them
+  (e.g., "low_energy" CONFLICTS_WITH "important_meeting")
+- SCHEDULED_AT: Activity occurs at time
+  (e.g., "dinner" SCHEDULED_AT "sunday_evening")
+- INVOLVES: Activity includes person/thing
+  (e.g., "dinner" INVOLVES "aunt_susan")
+
+**COLLISION PATTERN** (you MUST create this when applicable):
+[draining_activity] --DRAINS--> (energy_state) --CONFLICTS_WITH-->
+[requiring_activity] --REQUIRES--> (resource)
+
+**EXAMPLE 1** (Conflict scenario):
+Input: "Sunday: Emotionally draining dinner with complainers.
+Monday: Strategy presentation needs sharp focus."
+Expected Graph:
+- [dinner] --DRAINS--> (emotional_energy)
+- (emotional_energy) --CONFLICTS_WITH--> [strategy_presentation]
+- [strategy_presentation] --REQUIRES--> (sharp_focus)
+- [dinner] --SCHEDULED_AT--> [sunday]
+- [strategy_presentation] --SCHEDULED_AT--> [monday]
+
+**EXAMPLE 2** (Conflict scenario):
+Input: "Morning HIIT workout will exhaust me.
+Afternoon client meeting requires alertness."
+Expected Graph:
+- [hiit_workout] --DRAINS--> (physical_energy)
+- (physical_energy) --CONFLICTS_WITH--> [client_meeting]
+- [client_meeting] --REQUIRES--> (alertness)
+- [hiit_workout] --SCHEDULED_AT--> [morning]
+- [client_meeting] --SCHEDULED_AT--> [afternoon]
+
+**EXAMPLE 3** (No conflict):
+Input: "Monday standup meeting. Tuesday documentation work."
+Expected Graph:
+- [standup_meeting] --SCHEDULED_AT--> [monday]
+- [documentation_work] --SCHEDULED_AT--> [tuesday]
+(No DRAINS or CONFLICTS_WITH edges because neither activity drains energy)
+
+**INSTRUCTIONS**:
+1. Identify activities that DRAIN energy
+   (look for: draining, exhausting, tiring, stressful, overwhelming)
+2. Identify activities that REQUIRE energy
+   (look for: requires, needs, demands, important, critical)
+3. Create (energy_state) nodes as intermediaries
+4. ALWAYS connect draining activities to requiring activities via CONFLICTS_WITH
+   when they could impact each other
+5. Use snake_case for node IDs (e.g., "strategy_presentation" not "Strategy Presentation")
+
+Now extract the knowledge graph from the following text:
+"""
+
+
+def _fuzzy_match_relation(
+    relation_type: str, threshold: int = DEFAULT_FUZZY_THRESHOLD
+) -> str | None:
+    """Match relation type using RapidFuzz fuzzy matching (Tier 3).
+
+    Compares the relation type against curated candidate phrases using
+    RapidFuzz's WRatio scorer for semantic similarity.
+
+    Args:
+        relation_type: The Cognee relation type string.
+        threshold: Minimum similarity score (0-100) to accept a match.
+
+    Returns:
+        Canonical edge type if fuzzy match found above threshold, None otherwise.
+    """
+    if not RAPIDFUZZ_AVAILABLE:
+        logger.warning("RapidFuzz not available - fuzzy matching disabled")
+        return None
+
+    # Normalize: lowercase and replace underscores with spaces
+    normalized = relation_type.lower().replace("_", " ")
+
+    best_match: str | None = None
+    best_score: float = 0.0
+
+    for canonical_type, candidates in FUZZY_CANDIDATES.items():
+        # Use process.extractOne to find best match among candidates
+        result = process.extractOne(normalized, candidates, scorer=fuzz.WRatio)
+        if result is not None:
+            match_str, score, _ = result
+            if score > best_score and score >= threshold:
+                best_score = score
+                best_match = canonical_type
+
+    if best_match is not None:
+        logger.debug(
+            "Fuzzy matched '%s' to %s (score: %.1f%%)",
+            relation_type,
+            best_match,
+            best_score,
+        )
+
+    return best_match
+
+
+def _keyword_match_relation(relation_type: str) -> str | None:
+    """Match relation type using semantic keywords (Tier 2).
+
+    Checks if the relation type contains any semantic keywords that indicate
+    a known canonical type. Uses word stems for flexibility.
+
+    Args:
+        relation_type: The Cognee relation type string.
+
+    Returns:
+        Canonical edge type if keyword match found, None otherwise.
+    """
+    normalized = relation_type.lower()
+
+    for canonical_type, keywords in SEMANTIC_KEYWORDS.items():
+        for keyword in keywords:
+            if keyword in normalized:
+                return canonical_type
+
+    return None
+
 
 # Default confidence when Cognee doesn't provide one
 DEFAULT_CONFIDENCE: float = 0.8
@@ -309,7 +637,11 @@ def _map_cognee_entity_to_node(cognee_entity: dict[str, Any], text: str) -> Node
 def _map_cognee_relation_to_edge(
     cognee_relation: dict[str, Any],
 ) -> Edge | None:
-    """Map a Cognee relation to a Sentinel Edge.
+    """Map a Cognee relation to a Sentinel Edge using 3-tier strategy.
+
+    Tier 1: Exact match from RELATION_TYPE_MAP (O(1), no overhead)
+    Tier 2: Semantic keyword matching (_keyword_match_relation)
+    Tier 3: RapidFuzz fuzzy matching (_fuzzy_match_relation)
 
     Args:
         cognee_relation: Relation dict from Cognee with 'type', 'source_id',
@@ -323,19 +655,48 @@ def _map_cognee_relation_to_edge(
     target_id = cognee_relation.get("target_id", "")
     confidence = cognee_relation.get("confidence", DEFAULT_CONFIDENCE)
 
-    # Map relation type to Sentinel edge type
+    # Tier 1: Exact match from RELATION_TYPE_MAP (fastest, O(1))
     edge_type = RELATION_TYPE_MAP.get(relation_type)
-    if edge_type is None:
-        logger.warning("Unknown relation type '%s', filtering out", relation_type)
-        return None
+    if edge_type is not None:
+        logger.debug("Tier 1 exact match: '%s' → %s", relation_type, edge_type)
+        return Edge(
+            source_id=source_id,
+            target_id=target_id,
+            relationship=edge_type,
+            confidence=confidence,
+            metadata={"cognee_type": relation_type, "match_tier": "exact"},
+        )
 
-    return Edge(
-        source_id=source_id,
-        target_id=target_id,
-        relationship=edge_type,
-        confidence=confidence,
-        metadata={"cognee_type": relation_type},
+    # Tier 2: Semantic keyword matching
+    edge_type = _keyword_match_relation(relation_type)
+    if edge_type is not None:
+        logger.debug("Tier 2 keyword match: '%s' → %s", relation_type, edge_type)
+        return Edge(
+            source_id=source_id,
+            target_id=target_id,
+            relationship=edge_type,
+            confidence=confidence,
+            metadata={"cognee_type": relation_type, "match_tier": "keyword"},
+        )
+
+    # Tier 3: RapidFuzz fuzzy matching
+    edge_type = _fuzzy_match_relation(relation_type)
+    if edge_type is not None:
+        logger.debug("Tier 3 fuzzy match: '%s' → %s", relation_type, edge_type)
+        return Edge(
+            source_id=source_id,
+            target_id=target_id,
+            relationship=edge_type,
+            confidence=confidence,
+            metadata={"cognee_type": relation_type, "match_tier": "fuzzy"},
+        )
+
+    # No match found in any tier
+    logger.warning(
+        "Unknown relation type '%s', filtering out (no match in any tier)",
+        relation_type,
     )
+    return None
 
 
 def _filter_valid_edges(edges: list[Edge]) -> list[Edge]:
@@ -363,7 +724,7 @@ class CogneeEngine:
     and relationships from schedule text.
     """
 
-    async def ingest(self, text: str) -> Graph:
+    async def ingest(self, text: str, custom_prompt: str | None = None) -> Graph:
         """Ingest text and build a knowledge graph using Cognee.
 
         Calls Cognee's API to extract entities and relationships,
@@ -371,6 +732,9 @@ class CogneeEngine:
 
         Args:
             text: Schedule text to parse and convert to graph.
+            custom_prompt: Optional custom prompt for Cognee extraction.
+                Defaults to SENTINEL_EXTRACTION_PROMPT for energy-domain graphs.
+                Pass None to use Cognee's default extraction prompt.
 
         Returns:
             Graph containing extracted entities and relationships.
@@ -378,6 +742,9 @@ class CogneeEngine:
         Raises:
             IngestionError: If Cognee API call fails.
         """
+        # Use Sentinel's custom prompt by default for energy-domain extraction
+        prompt_to_use = custom_prompt if custom_prompt is not None else SENTINEL_EXTRACTION_PROMPT
+
         try:
             # Reset any previous state
             await cognee.prune.prune_data()
@@ -386,8 +753,12 @@ class CogneeEngine:
             # Add text to Cognee
             await cognee.add(text)
 
-            # Process with cognify (extracts entities + relationships)
-            await cognee.cognify()
+            # Process with cognify using custom extraction prompt (Story 2-7)
+            logger.debug(
+                "Using custom extraction prompt for cognify (length: %d chars)",
+                len(prompt_to_use),
+            )
+            await cognee.cognify(custom_prompt=prompt_to_use)
 
             # Query the graph for entities and relationships using Cypher
             # Get all nodes
