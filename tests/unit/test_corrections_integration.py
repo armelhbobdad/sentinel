@@ -150,6 +150,190 @@ class TestGraphLoadAppliesCorrections:
         assert len(loaded_graph.nodes) == 2, f"Should have all nodes: {node_ids}"
 
 
+# Story 3-2: Edge correction integration tests
+
+
+class TestGraphLoadAppliesEdgeCorrections:
+    """Tests for CogneeEngine.load() applying edge corrections (Story 3-2 Task 4)."""
+
+    def test_load_applies_modify_relationship_correction(self, tmp_path: Path) -> None:
+        """load() applies modify_relationship corrections to edges."""
+        from sentinel.core.engine import CogneeEngine
+        from sentinel.core.persistence import CorrectionStore
+
+        custom_xdg = str(tmp_path)
+
+        original_graph = Graph(
+            nodes=(
+                Node(
+                    id="person-aunt-susan",
+                    label="Aunt Susan",
+                    type="Person",
+                    source="user-stated",
+                ),
+                Node(
+                    id="energystate-drained",
+                    label="drained",
+                    type="EnergyState",
+                    source="ai-inferred",
+                ),
+            ),
+            edges=(
+                Edge(
+                    source_id="person-aunt-susan",
+                    target_id="energystate-drained",
+                    relationship="DRAINS",
+                    confidence=0.8,
+                ),
+            ),
+        )
+
+        with patch.dict(os.environ, {"XDG_DATA_HOME": custom_xdg}):
+            engine = CogneeEngine()
+            engine.persist(original_graph)
+
+            # Add a modify_relationship correction
+            store = CorrectionStore()
+            store.add_correction(
+                Correction(
+                    node_id="person-aunt-susan",
+                    action="modify_relationship",
+                    new_value="ENERGIZES",
+                    target_node_id="energystate-drained",
+                    edge_relationship="DRAINS",
+                ),
+                reason="Aunt Susan actually energizes me",
+            )
+
+            loaded_graph = engine.load(apply_corrections=True)
+
+        assert loaded_graph is not None, "Should load graph"
+        assert len(loaded_graph.edges) == 1, f"Should have 1 edge: {loaded_graph.edges}"
+        assert loaded_graph.edges[0].relationship == "ENERGIZES", (
+            f"Edge should be modified to ENERGIZES: {loaded_graph.edges[0].relationship}"
+        )
+
+    def test_load_applies_remove_edge_correction(self, tmp_path: Path) -> None:
+        """load() applies remove_edge corrections to edges."""
+        from sentinel.core.engine import CogneeEngine
+        from sentinel.core.persistence import CorrectionStore
+
+        custom_xdg = str(tmp_path)
+
+        original_graph = Graph(
+            nodes=(
+                Node(
+                    id="person-aunt-susan",
+                    label="Aunt Susan",
+                    type="Person",
+                    source="user-stated",
+                ),
+                Node(
+                    id="energystate-drained",
+                    label="drained",
+                    type="EnergyState",
+                    source="ai-inferred",
+                ),
+            ),
+            edges=(
+                Edge(
+                    source_id="person-aunt-susan",
+                    target_id="energystate-drained",
+                    relationship="DRAINS",
+                    confidence=0.8,
+                ),
+            ),
+        )
+
+        with patch.dict(os.environ, {"XDG_DATA_HOME": custom_xdg}):
+            engine = CogneeEngine()
+            engine.persist(original_graph)
+
+            # Add a remove_edge correction
+            store = CorrectionStore()
+            store.add_correction(
+                Correction(
+                    node_id="person-aunt-susan",
+                    action="remove_edge",
+                    target_node_id="energystate-drained",
+                ),
+                reason="Edge is incorrect",
+            )
+
+            loaded_graph = engine.load(apply_corrections=True)
+
+        assert loaded_graph is not None, "Should load graph"
+        assert len(loaded_graph.nodes) == 2, "Should still have 2 nodes"
+        assert len(loaded_graph.edges) == 0, f"Edge should be removed: {loaded_graph.edges}"
+
+    def test_load_preserves_unrelated_edges_with_remove_edge(self, tmp_path: Path) -> None:
+        """load() preserves edges not targeted by remove_edge correction."""
+        from sentinel.core.engine import CogneeEngine
+        from sentinel.core.persistence import CorrectionStore
+
+        custom_xdg = str(tmp_path)
+
+        original_graph = Graph(
+            nodes=(
+                Node(
+                    id="person-aunt-susan",
+                    label="Aunt Susan",
+                    type="Person",
+                    source="user-stated",
+                ),
+                Node(
+                    id="energystate-drained",
+                    label="drained",
+                    type="EnergyState",
+                    source="ai-inferred",
+                ),
+                Node(
+                    id="activity-meeting",
+                    label="Meeting",
+                    type="Activity",
+                    source="user-stated",
+                ),
+            ),
+            edges=(
+                Edge(
+                    source_id="person-aunt-susan",
+                    target_id="energystate-drained",
+                    relationship="DRAINS",
+                    confidence=0.8,
+                ),
+                Edge(
+                    source_id="person-aunt-susan",
+                    target_id="activity-meeting",
+                    relationship="INVOLVES",
+                    confidence=0.9,
+                ),
+            ),
+        )
+
+        with patch.dict(os.environ, {"XDG_DATA_HOME": custom_xdg}):
+            engine = CogneeEngine()
+            engine.persist(original_graph)
+
+            # Remove only one edge
+            store = CorrectionStore()
+            store.add_correction(
+                Correction(
+                    node_id="person-aunt-susan",
+                    action="remove_edge",
+                    target_node_id="energystate-drained",
+                ),
+                reason="Edge is incorrect",
+            )
+
+            loaded_graph = engine.load(apply_corrections=True)
+
+        assert loaded_graph is not None, "Should load graph"
+        assert len(loaded_graph.edges) == 1, f"Should have 1 edge: {loaded_graph.edges}"
+        assert loaded_graph.edges[0].relationship == "INVOLVES", (
+            f"INVOLVES edge should remain: {loaded_graph.edges[0]}"
+        )
+
+
 class TestCheckCommandAppliesCorrections:
     """Tests for check command applying corrections (AC: #5)."""
 

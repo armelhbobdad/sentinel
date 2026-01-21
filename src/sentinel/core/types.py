@@ -131,12 +131,22 @@ class Correction:
 
     Used to modify or delete AI-inferred nodes/edges based on user feedback.
 
+    Supports both node-level corrections (delete) and edge-level corrections
+    (modify_relationship, remove_edge) introduced in schema v1.1.
+
     Attributes:
-        node_id: ID of the node to correct.
-        action: The correction action (delete, modify).
+        node_id: ID of the source node to correct.
+        action: The correction action. Supported values:
+            - "delete": Remove the node and cascade to edges (v1.0)
+            - "modify_relationship": Change edge relationship type (v1.1)
+            - "remove_edge": Remove specific edge, keep nodes (v1.1)
         new_value: New value for modify action, None for delete.
+        target_node_id: Target node ID for edge operations (v1.1).
+        edge_relationship: Original relationship type for edge operations (v1.1).
     """
 
     node_id: str
     action: str
     new_value: str | None = None
+    target_node_id: str | None = None
+    edge_relationship: str | None = None

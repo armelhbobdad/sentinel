@@ -665,12 +665,326 @@ def correct_delete(ctx: click.Context, node_label: str, yes: bool) -> None:
         raise SystemExit(EXIT_INTERNAL_ERROR)
 
 
+@correct.command(name="modify")
+@click.argument("source_label")
+@click.option(
+    "--target",
+    "-t",
+    required=True,
+    help="Target node label for the edge to modify.",
+)
+@click.option(
+    "--relationship",
+    "-r",
+    required=True,
+    help="New relationship type (e.g., ENERGIZES, DRAINS).",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip confirmation prompt.",
+)
+@click.pass_context
+def correct_modify(
+    ctx: click.Context,
+    source_label: str,
+    target: str,
+    relationship: str,
+    yes: bool,
+) -> None:
+    """Modify the relationship type of an edge in the knowledge graph.
+
+    SOURCE_LABEL is the label of the source node (supports fuzzy matching).
+
+    Examples:
+        sentinel correct modify "Aunt Susan" --target "drained" --relationship ENERGIZES
+        sentinel correct modify "Aunt Susan" -t "drained" -r ENERGIZES --yes
+    """
+    from sentinel.core.engine import VALID_EDGE_TYPES, CogneeEngine
+
+    try:
+        engine = CogneeEngine()
+        graph = engine.load()
+
+        if graph is None:
+            error_console.print("[yellow]No schedule data found.[/yellow]")
+            error_console.print("Run [bold]sentinel paste[/bold] first to add your schedule.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Validate relationship type
+        valid_types = VALID_EDGE_TYPES | {"ENERGIZES"}
+        if relationship not in valid_types:
+            error_console.print(f"[red]Error:[/red] Invalid relationship type '{relationship}'.")
+            error_console.print(f"[dim]Valid types: {', '.join(sorted(valid_types))}[/dim]")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Find source node using fuzzy matching (all nodes, not just AI-inferred)
+        source_result = fuzzy_find_node(graph, source_label, ai_inferred_only=False)
+
+        if source_result.match is None:
+            if source_result.suggestions:
+                error_console.print(f"[red]Error:[/red] Source node '{source_label}' not found.")
+                error_console.print()
+                error_console.print(format_node_suggestions(source_result.suggestions))
+            else:
+                error_console.print(f"[red]Error:[/red] No nodes found matching '{source_label}'.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Find target node using fuzzy matching
+        target_result = fuzzy_find_node(graph, target, ai_inferred_only=False)
+
+        if target_result.match is None:
+            if target_result.suggestions:
+                error_console.print(f"[red]Error:[/red] Target node '{target}' not found.")
+                error_console.print()
+                error_console.print(format_node_suggestions(target_result.suggestions))
+            else:
+                error_console.print(f"[red]Error:[/red] No nodes found matching '{target}'.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        source_node = source_result.match
+        target_node = target_result.match
+
+        # Find the edge between these nodes
+        edge_found = None
+        for edge in graph.edges:
+            if edge.source_id == source_node.id and edge.target_id == target_node.id:
+                edge_found = edge
+                break
+
+        if edge_found is None:
+            error_console.print(
+                f"[red]Error:[/red] No edge found from "
+                f"'{source_node.label}' to '{target_node.label}'."
+            )
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # If fuzzy match (not exact), ask for confirmation
+        if (not source_result.is_exact or not target_result.is_exact) and not yes:
+            console.print("[yellow]Did you mean this edge?[/yellow]")
+            console.print(
+                f"  [bold]{source_node.label}[/bold] → {edge_found.relationship} → "
+                f"[bold]{target_node.label}[/bold]"
+            )
+            if not click.confirm("Modify this edge?"):
+                console.print("[dim]Aborted.[/dim]")
+                raise SystemExit(EXIT_SUCCESS)
+
+        # Confirm for exact match without --yes
+        if source_result.is_exact and target_result.is_exact and not yes:
+            console.print("About to modify edge:")
+            console.print(
+                f"  [bold]{source_node.label}[/bold] → {edge_found.relationship} → "
+                f"[bold]{target_node.label}[/bold]"
+            )
+            console.print(f"  New relationship: [bold]{relationship}[/bold]")
+            if not click.confirm("Are you sure?"):
+                console.print("[dim]Aborted.[/dim]")
+                raise SystemExit(EXIT_SUCCESS)
+
+        # Apply the correction
+        correction = Correction(
+            node_id=source_node.id,
+            action="modify_relationship",
+            new_value=relationship,
+            target_node_id=target_node.id,
+            edge_relationship=edge_found.relationship,
+        )
+
+        try:
+            mutated_graph = engine.mutate(graph, correction)
+        except ValueError as e:
+            error_console.print(f"[red]Error:[/red] {e}")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Persist the correction
+        store = CorrectionStore()
+        store.add_correction(
+            correction,
+            reason=f"User modified edge via CLI: {edge_found.relationship} → {relationship}",
+        )
+
+        # Persist the mutated graph
+        engine.persist(mutated_graph)
+
+        console.print(
+            f"[green]✓[/green] Modified edge: "
+            f"[bold]{source_node.label}[/bold] → [bold]{relationship}[/bold] → "
+            f"[bold]{target_node.label}[/bold]"
+        )
+        console.print(f"[dim]Changed from {edge_found.relationship}.[/dim]")
+
+        raise SystemExit(EXIT_SUCCESS)
+
+    except PersistenceError as e:
+        logger.exception("Failed to load/save graph")
+        error_console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+    except SystemExit:
+        raise
+    except Exception:
+        logger.exception("Unhandled exception in correct modify command")
+        error_console.print("[red]Unexpected error[/red]")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+
+
+@correct.command(name="remove-edge")
+@click.argument("source_label")
+@click.option(
+    "--target",
+    "-t",
+    required=True,
+    help="Target node label for the edge to remove.",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip confirmation prompt.",
+)
+@click.pass_context
+def correct_remove_edge(
+    ctx: click.Context,
+    source_label: str,
+    target: str,
+    yes: bool,
+) -> None:
+    """Remove a specific edge from the knowledge graph.
+
+    Removes the edge between source and target nodes while keeping both nodes.
+
+    SOURCE_LABEL is the label of the source node (supports fuzzy matching).
+
+    Examples:
+        sentinel correct remove-edge "Aunt Susan" --target "drained"
+        sentinel correct remove-edge "Aunt Susan" -t "drained" --yes
+    """
+    from sentinel.core.engine import CogneeEngine
+
+    try:
+        engine = CogneeEngine()
+        graph = engine.load()
+
+        if graph is None:
+            error_console.print("[yellow]No schedule data found.[/yellow]")
+            error_console.print("Run [bold]sentinel paste[/bold] first to add your schedule.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Find source node using fuzzy matching
+        source_result = fuzzy_find_node(graph, source_label, ai_inferred_only=False)
+
+        if source_result.match is None:
+            if source_result.suggestions:
+                error_console.print(f"[red]Error:[/red] Source node '{source_label}' not found.")
+                error_console.print()
+                error_console.print(format_node_suggestions(source_result.suggestions))
+            else:
+                error_console.print(f"[red]Error:[/red] No nodes found matching '{source_label}'.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Find target node using fuzzy matching
+        target_result = fuzzy_find_node(graph, target, ai_inferred_only=False)
+
+        if target_result.match is None:
+            if target_result.suggestions:
+                error_console.print(f"[red]Error:[/red] Target node '{target}' not found.")
+                error_console.print()
+                error_console.print(format_node_suggestions(target_result.suggestions))
+            else:
+                error_console.print(f"[red]Error:[/red] No nodes found matching '{target}'.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        source_node = source_result.match
+        target_node = target_result.match
+
+        # Find the edge between these nodes
+        edge_found = None
+        for edge in graph.edges:
+            if edge.source_id == source_node.id and edge.target_id == target_node.id:
+                edge_found = edge
+                break
+
+        if edge_found is None:
+            error_console.print(
+                f"[red]Error:[/red] No edge found from "
+                f"'{source_node.label}' to '{target_node.label}'."
+            )
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # If fuzzy match (not exact), ask for confirmation
+        if (not source_result.is_exact or not target_result.is_exact) and not yes:
+            console.print("[yellow]Did you mean this edge?[/yellow]")
+            console.print(
+                f"  [bold]{source_node.label}[/bold] → {edge_found.relationship} → "
+                f"[bold]{target_node.label}[/bold]"
+            )
+            if not click.confirm("Remove this edge?"):
+                console.print("[dim]Aborted.[/dim]")
+                raise SystemExit(EXIT_SUCCESS)
+
+        # Confirm for exact match without --yes
+        if source_result.is_exact and target_result.is_exact and not yes:
+            console.print("About to remove edge:")
+            console.print(
+                f"  [bold]{source_node.label}[/bold] → {edge_found.relationship} → "
+                f"[bold]{target_node.label}[/bold]"
+            )
+            if not click.confirm("Are you sure?"):
+                console.print("[dim]Aborted.[/dim]")
+                raise SystemExit(EXIT_SUCCESS)
+
+        # Apply the correction
+        correction = Correction(
+            node_id=source_node.id,
+            action="remove_edge",
+            target_node_id=target_node.id,
+            edge_relationship=edge_found.relationship,
+        )
+
+        try:
+            mutated_graph = engine.mutate(graph, correction)
+        except ValueError as e:
+            error_console.print(f"[red]Error:[/red] {e}")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Persist the correction
+        store = CorrectionStore()
+        store.add_correction(
+            correction,
+            reason=f"User removed edge via CLI: {source_node.label} → {target_node.label}",
+        )
+
+        # Persist the mutated graph
+        engine.persist(mutated_graph)
+
+        console.print(
+            f"[green]✓[/green] Removed edge: "
+            f"[bold]{source_node.label}[/bold] → {edge_found.relationship} → "
+            f"[bold]{target_node.label}[/bold]"
+        )
+        console.print("[dim]Both nodes have been preserved.[/dim]")
+
+        raise SystemExit(EXIT_SUCCESS)
+
+    except PersistenceError as e:
+        logger.exception("Failed to load/save graph")
+        error_console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+    except SystemExit:
+        raise
+    except Exception:
+        logger.exception("Unhandled exception in correct remove-edge command")
+        error_console.print("[red]Unexpected error[/red]")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+
+
 @correct.command(name="list")
 @click.pass_context
 def correct_list(ctx: click.Context) -> None:
     """List all corrections made to the knowledge graph.
 
-    Shows deleted nodes and any other corrections that have been applied.
+    Shows deleted nodes, modified edges, and removed edges.
 
     Example: sentinel correct list
     """
@@ -685,6 +999,10 @@ def correct_list(ctx: click.Context) -> None:
                 "Use [bold]sentinel correct delete <node>[/bold] "
                 "to delete incorrectly inferred nodes."
             )
+            console.print(
+                "Use [bold]sentinel correct modify[/bold] to change edge relationship types."
+            )
+            console.print("Use [bold]sentinel correct remove-edge[/bold] to remove specific edges.")
             raise SystemExit(EXIT_SUCCESS)
 
         console.print(f"[bold]Corrections ({len(records)}):[/bold]")
@@ -695,8 +1013,15 @@ def correct_list(ctx: click.Context) -> None:
             action_display = action.upper()
             if action == "delete":
                 action_display = "[red]DELETE[/red]"
+            elif action == "modify_relationship":
+                action_display = "[yellow]MODIFY[/yellow]"
+            elif action == "remove_edge":
+                action_display = "[magenta]REMOVE_EDGE[/magenta]"
 
             node_id = record.get("node_id", "unknown")
+            target_id = record.get("target_node_id", "")
+            new_value = record.get("new_value", "")
+            old_relationship = record.get("edge_relationship", "")
             timestamp = record.get("timestamp", "")
 
             # Format timestamp for display (show date only for brevity)
@@ -705,7 +1030,23 @@ def correct_list(ctx: click.Context) -> None:
                 # Parse ISO format and show just the date
                 time_display = f" [dim]({timestamp[:10]})[/dim]"
 
-            console.print(f"  {i}. {action_display}: {node_id}{time_display}")
+            # Format based on action type
+            if action == "delete":
+                console.print(f"  {i}. {action_display}: {node_id}{time_display}")
+            elif action == "modify_relationship":
+                # Show old→new relationship format
+                if old_relationship:
+                    rel_change = f"{old_relationship} → {new_value}"
+                else:
+                    rel_change = f"→ {new_value}"
+                console.print(
+                    f"  {i}. {action_display}: {node_id} → {target_id} "
+                    f"[dim]({rel_change})[/dim]{time_display}"
+                )
+            elif action == "remove_edge":
+                console.print(f"  {i}. {action_display}: {node_id} → {target_id}{time_display}")
+            else:
+                console.print(f"  {i}. {action_display}: {node_id}{time_display}")
 
         raise SystemExit(EXIT_SUCCESS)
 

@@ -96,6 +96,8 @@ class CorrectionStore:
     def load(self) -> list[Correction]:
         """Load corrections from the corrections file.
 
+        Supports both v1.0 (node corrections only) and v1.1 (with edge corrections).
+
         Returns:
             List of corrections. Empty list if file doesn't exist or is corrupted.
         """
@@ -117,6 +119,9 @@ class CorrectionStore:
                         node_id=item["node_id"],
                         action=item["action"],
                         new_value=item.get("new_value"),
+                        # v1.1 edge fields (default to None for backward compatibility)
+                        target_node_id=item.get("target_node_id"),
+                        edge_relationship=item.get("edge_relationship"),
                     )
                 )
 
@@ -135,6 +140,7 @@ class CorrectionStore:
         """Save corrections to the corrections file.
 
         Uses atomic write (temp file + rename) to prevent corruption.
+        Uses schema v1.1 when any correction has edge fields, v1.0 otherwise.
 
         Args:
             corrections: List of corrections to save.
@@ -149,27 +155,40 @@ class CorrectionStore:
                 with open(corrections_path, encoding="utf-8") as f:
                     data = json.load(f)
                 for item in data.get("corrections", []):
-                    existing_data[item["node_id"]] = item
+                    # Use composite key for edge corrections
+                    key = self._correction_key(item)
+                    existing_data[key] = item
             except (json.JSONDecodeError, KeyError, TypeError):
                 pass  # Ignore corrupted existing file
 
         now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
+        # Determine schema version: v1.1 if any correction has edge fields
+        has_edge_corrections = any(
+            c.target_node_id is not None or c.edge_relationship is not None for c in corrections
+        )
+        schema_version = "1.1" if has_edge_corrections else "1.0"
+
         correction_records = []
         for correction in corrections:
             # Preserve existing timestamp and reason if available
-            existing = existing_data.get(correction.node_id, {})
-            record = {
+            key = self._correction_key_from_obj(correction)
+            existing = existing_data.get(key, {})
+            record: dict = {
                 "node_id": correction.node_id,
                 "action": correction.action,
                 "new_value": correction.new_value,
                 "timestamp": existing.get("timestamp", now),
                 "reason": existing.get("reason", ""),
             }
+            # Include edge fields for v1.1 schema
+            if has_edge_corrections:
+                record["target_node_id"] = correction.target_node_id
+                record["edge_relationship"] = correction.edge_relationship
             correction_records.append(record)
 
         data = {
-            "version": "1.0",
+            "version": schema_version,
             "corrections": correction_records,
         }
 
@@ -189,8 +208,24 @@ class CorrectionStore:
 
         self._corrections = corrections
 
+    def _correction_key(self, item: dict) -> str:
+        """Generate unique key for a correction record dict."""
+        node_id = item.get("node_id", "")
+        target_id = item.get("target_node_id", "")
+        if target_id:
+            return f"{node_id}:{target_id}"
+        return node_id
+
+    def _correction_key_from_obj(self, correction: Correction) -> str:
+        """Generate unique key for a Correction object."""
+        if correction.target_node_id:
+            return f"{correction.node_id}:{correction.target_node_id}"
+        return correction.node_id
+
     def add_correction(self, correction: Correction, reason: str = "") -> None:
         """Add a new correction and persist immediately.
+
+        Uses schema v1.1 when any correction has edge fields, v1.0 otherwise.
 
         Args:
             correction: The correction to add.
@@ -214,18 +249,27 @@ class CorrectionStore:
                 with open(corrections_path, encoding="utf-8") as f:
                     data = json.load(f)
                 for item in data.get("corrections", []):
-                    existing_data[item["node_id"]] = item
+                    key = self._correction_key(item)
+                    existing_data[key] = item
             except (json.JSONDecodeError, KeyError, TypeError):
                 pass
 
         now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
+        # Determine schema version: v1.1 if any correction has edge fields
+        has_edge_corrections = any(
+            c.target_node_id is not None or c.edge_relationship is not None
+            for c in self._corrections
+        )
+        schema_version = "1.1" if has_edge_corrections else "1.0"
+
         correction_records = []
         for corr in self._corrections:
-            existing = existing_data.get(corr.node_id, {})
+            key = self._correction_key_from_obj(corr)
+            existing = existing_data.get(key, {})
             # Use the new reason for the newly added correction
-            if corr.node_id == correction.node_id and corr is correction:
-                record = {
+            if corr is correction:
+                record: dict = {
                     "node_id": corr.node_id,
                     "action": corr.action,
                     "new_value": corr.new_value,
@@ -240,10 +284,14 @@ class CorrectionStore:
                     "timestamp": existing.get("timestamp", now),
                     "reason": existing.get("reason", ""),
                 }
+            # Include edge fields for v1.1 schema
+            if has_edge_corrections:
+                record["target_node_id"] = corr.target_node_id
+                record["edge_relationship"] = corr.edge_relationship
             correction_records.append(record)
 
         data = {
-            "version": "1.0",
+            "version": schema_version,
             "corrections": correction_records,
         }
 

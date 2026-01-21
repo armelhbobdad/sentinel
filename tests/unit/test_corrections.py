@@ -265,3 +265,186 @@ class TestCorrectionStoreGetDeletedNodeIds:
             result = store.get_deleted_node_ids()
 
         assert result == set(), f"Expected empty set, got {result}"
+
+
+# Story 3-2: Extended Correction type tests
+
+
+class TestCorrectionTypeExtended:
+    """Tests for extended Correction type with edge operation fields (Story 3-2 Task 1)."""
+
+    def test_correction_has_target_node_id_field(self) -> None:
+        """Correction type has optional target_node_id field for edge operations."""
+        correction = Correction(
+            node_id="person-aunt-susan",
+            action="modify_relationship",
+            new_value="ENERGIZES",
+            target_node_id="energystate-drained",
+        )
+
+        assert correction.target_node_id == "energystate-drained", (
+            f"Expected target_node_id, got {correction.target_node_id}"
+        )
+
+    def test_correction_has_edge_relationship_field(self) -> None:
+        """Correction type has optional edge_relationship field for original relationship."""
+        correction = Correction(
+            node_id="person-aunt-susan",
+            action="modify_relationship",
+            new_value="ENERGIZES",
+            target_node_id="energystate-drained",
+            edge_relationship="DRAINS",
+        )
+
+        assert correction.edge_relationship == "DRAINS", (
+            f"Expected edge_relationship, got {correction.edge_relationship}"
+        )
+
+    def test_correction_optional_fields_default_none(self) -> None:
+        """Optional fields default to None for backward compatibility."""
+        correction = Correction(node_id="test", action="delete")
+
+        assert correction.target_node_id is None, "target_node_id should default to None"
+        assert correction.edge_relationship is None, "edge_relationship should default to None"
+
+    def test_correction_immutable_with_new_fields(self) -> None:
+        """Correction remains immutable with new fields."""
+        correction = Correction(
+            node_id="person-aunt-susan",
+            action="remove_edge",
+            target_node_id="energystate-drained",
+            edge_relationship="DRAINS",
+        )
+
+        # Should raise FrozenInstanceError (or similar) on modification attempt
+        import pytest
+
+        with pytest.raises(Exception):  # FrozenInstanceError
+            correction.target_node_id = "other"  # type: ignore[misc]
+
+
+class TestCorrectionStoreSchemav11:
+    """Tests for CorrectionStore schema v1.1 with edge corrections (Story 3-2 Task 1.3)."""
+
+    def test_save_edge_correction_includes_new_fields(self, tmp_path: Path) -> None:
+        """save() includes target_node_id and edge_relationship for edge corrections."""
+        from sentinel.core.persistence import CorrectionStore
+
+        custom_xdg = str(tmp_path)
+        correction = Correction(
+            node_id="person-aunt-susan",
+            action="modify_relationship",
+            new_value="ENERGIZES",
+            target_node_id="energystate-drained",
+            edge_relationship="DRAINS",
+        )
+
+        with patch.dict(os.environ, {"XDG_DATA_HOME": custom_xdg}):
+            store = CorrectionStore()
+            store.add_correction(correction, reason="Changed DRAINS to ENERGIZES")
+
+        corrections_path = tmp_path / "sentinel" / "corrections.json"
+        with open(corrections_path, encoding="utf-8") as f:
+            data = json.load(f)
+
+        # Schema v1.1 should be used when edge fields are present
+        assert data["version"] == "1.1", f"Expected version 1.1, got {data.get('version')}"
+
+        correction_data = data["corrections"][0]
+        assert correction_data["target_node_id"] == "energystate-drained", (
+            f"Expected target_node_id, got {correction_data}"
+        )
+        assert correction_data["edge_relationship"] == "DRAINS", (
+            f"Expected edge_relationship, got {correction_data}"
+        )
+
+    def test_load_v11_corrections_with_edge_fields(self, tmp_path: Path) -> None:
+        """load() correctly parses v1.1 schema with edge correction fields."""
+        from sentinel.core.persistence import CorrectionStore
+
+        custom_xdg = str(tmp_path)
+        sentinel_dir = tmp_path / "sentinel"
+        sentinel_dir.mkdir(parents=True)
+        corrections_path = sentinel_dir / "corrections.json"
+
+        # Write v1.1 schema with edge correction
+        data = {
+            "version": "1.1",
+            "corrections": [
+                {
+                    "node_id": "person-aunt-susan",
+                    "action": "modify_relationship",
+                    "new_value": "ENERGIZES",
+                    "target_node_id": "energystate-drained",
+                    "edge_relationship": "DRAINS",
+                    "timestamp": "2026-01-21T16:30:00Z",
+                    "reason": "User changed relationship",
+                }
+            ],
+        }
+        corrections_path.write_text(json.dumps(data), encoding="utf-8")
+
+        with patch.dict(os.environ, {"XDG_DATA_HOME": custom_xdg}):
+            store = CorrectionStore()
+            result = store.load()
+
+        assert len(result) == 1, f"Expected 1 correction, got {len(result)}"
+        assert result[0].target_node_id == "energystate-drained", (
+            f"Expected target_node_id, got {result[0].target_node_id}"
+        )
+        assert result[0].edge_relationship == "DRAINS", (
+            f"Expected edge_relationship, got {result[0].edge_relationship}"
+        )
+
+    def test_load_v10_backward_compatibility(self, tmp_path: Path) -> None:
+        """load() still works with v1.0 schema (backward compatibility)."""
+        from sentinel.core.persistence import CorrectionStore
+
+        custom_xdg = str(tmp_path)
+        sentinel_dir = tmp_path / "sentinel"
+        sentinel_dir.mkdir(parents=True)
+        corrections_path = sentinel_dir / "corrections.json"
+
+        # Write v1.0 schema (no edge fields)
+        data = {
+            "version": "1.0",
+            "corrections": [
+                {
+                    "node_id": "energystate-drained",
+                    "action": "delete",
+                    "new_value": None,
+                    "timestamp": "2026-01-21T15:30:00Z",
+                    "reason": "User deleted node",
+                }
+            ],
+        }
+        corrections_path.write_text(json.dumps(data), encoding="utf-8")
+
+        with patch.dict(os.environ, {"XDG_DATA_HOME": custom_xdg}):
+            store = CorrectionStore()
+            result = store.load()
+
+        assert len(result) == 1, f"Expected 1 correction, got {len(result)}"
+        assert result[0].node_id == "energystate-drained"
+        assert result[0].action == "delete"
+        # New fields should default to None
+        assert result[0].target_node_id is None, "target_node_id should be None for v1.0"
+        assert result[0].edge_relationship is None, "edge_relationship should be None for v1.0"
+
+    def test_save_uses_v10_when_no_edge_corrections(self, tmp_path: Path) -> None:
+        """save() uses v1.0 schema when no edge corrections are present."""
+        from sentinel.core.persistence import CorrectionStore
+
+        custom_xdg = str(tmp_path)
+        correction = Correction(node_id="test", action="delete")
+
+        with patch.dict(os.environ, {"XDG_DATA_HOME": custom_xdg}):
+            store = CorrectionStore()
+            store.add_correction(correction, reason="Deleted node")
+
+        corrections_path = tmp_path / "sentinel" / "corrections.json"
+        with open(corrections_path, encoding="utf-8") as f:
+            data = json.load(f)
+
+        # Should still use v1.0 for node-only corrections (backward compatibility)
+        assert data["version"] == "1.0", f"Expected version 1.0, got {data.get('version')}"
