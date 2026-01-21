@@ -411,8 +411,14 @@ def paste(ctx: click.Context) -> None:
     is_flag=True,
     help="Show all collisions including low-confidence speculative ones.",
 )
+@click.option(
+    "--show-acked",
+    "-a",
+    is_flag=True,
+    help="Show acknowledged collisions with [ACKED] label.",
+)
 @click.pass_context
-def check(ctx: click.Context, verbose: bool) -> None:
+def check(ctx: click.Context, verbose: bool, show_acked: bool) -> None:
     """Check your schedule for energy collisions.
 
     Analyzes the knowledge graph for collision patterns where energy-draining
@@ -423,19 +429,20 @@ def check(ctx: click.Context, verbose: bool) -> None:
     By default, only collisions with confidence >= 50% are shown. Use --verbose
     to see all collisions including low-confidence speculative ones.
 
+    Acknowledged collisions are hidden by default. Use --show-acked to display
+    them with an [ACKED] label.
+
     Examples:
         sentinel check              # Check for collisions in saved graph
         sentinel check --verbose    # Include low-confidence speculative collisions
+        sentinel check --show-acked # Show acknowledged collisions with [ACKED] label
         sentinel paste < schedule.txt && sentinel check   # Ingest then check
     """
     from rich.progress import Progress, SpinnerColumn, TextColumn
 
     from sentinel.core.engine import CogneeEngine
     from sentinel.core.exceptions import PersistenceError
-    from sentinel.core.rules import (
-        detect_cross_domain_collisions,
-        find_collision_paths_async,
-    )
+    from sentinel.core.rules import find_collision_paths_async
 
     debug = ctx.obj.get("debug", False)
     if debug:
@@ -506,36 +513,104 @@ def check(ctx: click.Context, verbose: bool) -> None:
 
         # Filter by confidence unless verbose (Story 2.4 AC #5)
         if verbose:
-            display_collisions = all_collisions
-            hidden_count = 0
+            confidence_filtered = all_collisions
+            low_confidence_hidden = 0
         else:
-            display_collisions = filter_collisions_by_confidence(all_collisions, MEDIUM_CONFIDENCE)
-            hidden_count = len(all_collisions) - len(display_collisions)
+            confidence_filtered = filter_collisions_by_confidence(all_collisions, MEDIUM_CONFIDENCE)
+            low_confidence_hidden = len(all_collisions) - len(confidence_filtered)
 
-        # If all collisions were filtered out, show success message
-        if not display_collisions:
+        # If all collisions were filtered out by confidence, show success message
+        if not confidence_filtered:
             # All collisions below threshold - show empty state with hidden count (AC #1)
             # NOTE: No ASCII graph rendering for empty state (AC #6)
-            display_empty_state(len(graph.edges), hidden_count)
+            display_empty_state(len(graph.edges), low_confidence_hidden)
+            raise SystemExit(EXIT_SUCCESS)
+
+        # Filter by acknowledgments (Story 3-4)
+        ack_store = AcknowledgmentStore()
+        acked_keys = ack_store.get_acknowledged_keys()
+
+        unacked_collisions: list[ScoredCollision] = []
+        acked_collisions: list[ScoredCollision] = []
+
+        for collision in confidence_filtered:
+            key = generate_collision_key(collision)
+            if key in acked_keys:
+                acked_collisions.append(collision)
+            else:
+                unacked_collisions.append(collision)
+
+        acked_count = len(acked_collisions)
+
+        # Determine display mode based on --show-acked flag
+        if show_acked:
+            # Show all collisions including acknowledged with [ACKED] label
+            display_collisions = unacked_collisions + acked_collisions
+        else:
+            display_collisions = unacked_collisions
+
+        # If all collisions are acknowledged and not showing acked, show success
+        if not display_collisions and acked_count > 0:
+            # All collisions acknowledged - special empty state (AC #6)
+            console.print("[green]✓[/green] NO NEW COLLISIONS")
+            console.print()
+            if acked_count == 1:
+                console.print(
+                    "[dim](1 acknowledged collision hidden. Use --show-acked to view)[/dim]"
+                )
+            else:
+                console.print(
+                    f"[dim]({acked_count} acknowledged collisions hidden. "
+                    "Use --show-acked to view)[/dim]"
+                )
             raise SystemExit(EXIT_SUCCESS)
 
         # Display each collision with formatted path and context (Story 2.3)
         console.print()  # Blank line for visual separation
         for i, collision in enumerate(display_collisions, 1):
-            display_collision_warning(collision, i, graph)
+            # Check if this collision is acknowledged (for [ACKED] label)
+            key = generate_collision_key(collision)
+            is_acked = key in acked_keys
+
+            if show_acked and is_acked:
+                # Display with [ACKED] label and dim styling
+                formatted_path = format_collision_path(collision)
+                console.print(f"[dim][ACKED] {formatted_path}[/dim]")
+            else:
+                display_collision_warning(collision, i, graph)
             console.print()  # Blank line between collisions
 
-        # Show summary with filtering info (Story 2.4 AC #5)
-        collision_count = len(display_collisions)
-        plural = "s" if collision_count != 1 else ""
-        summary = (
-            f"[yellow]Found {collision_count} collision{plural} affecting your schedule.[/yellow]"
-        )
-        console.print(summary)
-
-        if hidden_count > 0:
+        # Show summary with filtering info (Story 2.4 AC #5, Story 3-4 AC #5)
+        total_collisions = len(unacked_collisions) + acked_count
+        if show_acked:
+            # Summary for --show-acked mode
+            if acked_count > 0:
+                console.print(
+                    f"[bold]{total_collisions} collisions total[/bold] "
+                    f"[dim]({acked_count} acknowledged)[/dim]"
+                )
+            else:
+                plural = "s" if total_collisions != 1 else ""
+                console.print(
+                    f"[yellow]Found {total_collisions} collision{plural} "
+                    "affecting your schedule.[/yellow]"
+                )
+        else:
+            # Default summary (unacknowledged only)
+            unacked_count = len(unacked_collisions)
+            plural = "s" if unacked_count != 1 else ""
             console.print(
-                f"[dim]({hidden_count} low-confidence hidden, use --verbose to show)[/dim]"
+                f"[yellow]Found {unacked_count} collision{plural} affecting your schedule.[/yellow]"
+            )
+            if acked_count > 0:
+                console.print(
+                    f"[dim]({total_collisions} collisions detected, "
+                    f"{acked_count} acknowledged, hidden)[/dim]"
+                )
+
+        if low_confidence_hidden > 0:
+            console.print(
+                f"[dim]({low_confidence_hidden} low-confidence hidden, use --verbose to show)[/dim]"
             )
 
         # Show ASCII graph with collision paths highlighted (AC #4)
@@ -545,7 +620,11 @@ def check(ctx: click.Context, verbose: bool) -> None:
         ascii_output = render_ascii(graph, collision_paths=collision_paths)
         console.print(ascii_output, markup=False)
 
-        raise SystemExit(EXIT_COLLISION_DETECTED)
+        # Exit code based on unacknowledged collisions
+        if unacked_collisions:
+            raise SystemExit(EXIT_COLLISION_DETECTED)
+        else:
+            raise SystemExit(EXIT_SUCCESS)
 
     except PersistenceError as e:
         logger.exception("Failed to load graph")
