@@ -9,7 +9,8 @@ Sentinel uses knowledge graphs to find hidden energy collisions in your schedule
 - **Schedule Ingestion**: Parse natural language schedule descriptions into a knowledge graph
 - **Collision Detection**: Find multi-hop energy conflicts through graph traversal
 - **Graph Exploration**: Explore relationships around any node
-- **User Corrections**: Delete or modify AI-inferred relationships
+- **User Corrections**: Delete nodes, modify relationships, or remove edges from AI inferences
+- **Warning Acknowledgment**: Mark unavoidable collisions as acknowledged to suppress repeated warnings
 - **Confidence Scoring**: See which collisions are most reliable
 
 ## Installation
@@ -126,6 +127,85 @@ Risk: Entering high-stakes meeting already depleted.
 - `0` - Success, no collisions detected
 - `1` - Success, collisions detected (warnings present)
 - `2` - Error (graph not found, processing failure)
+
+### Managing Acknowledged Warnings
+
+Use `--show-acked` to include previously acknowledged collisions in the output:
+
+```bash
+# Show all collisions including acknowledged ones
+uv run sentinel check --show-acked
+```
+
+Acknowledged collisions display with an `[ACKED]` label.
+
+### Correcting AI Inferences (correct)
+
+Sentinel's AI may sometimes infer incorrect relationships. Use the `correct` command to fix them:
+
+```bash
+# Delete an AI-inferred node (removes node and all connected edges)
+uv run sentinel correct delete "drained"
+
+# Skip confirmation prompt
+uv run sentinel correct delete "drained" --yes
+
+# Modify a relationship type between nodes
+uv run sentinel correct modify "Aunt Susan" --target "drained" --relationship ENERGIZES
+
+# Remove a specific edge while keeping both nodes
+uv run sentinel correct remove-edge "Aunt Susan" --target "drained"
+
+# List all corrections made
+uv run sentinel correct list
+```
+
+**Example Output (delete):**
+
+```
+Found node: drained (score: 100)
+
+This will delete the AI-inferred node 'drained' and remove 2 connected edge(s).
+Connected edges:
+  • Aunt Susan --DRAINS--> drained
+  • drained --CONFLICTS_WITH--> focused
+
+Proceed? [y/N]: y
+✓ Deleted node 'drained' and 2 connected edge(s)
+```
+
+**Notes:**
+- Only AI-inferred nodes can be deleted (user-stated facts are protected)
+- Fuzzy matching handles variations: "aunt-susan", "Aunt Susan", "aunt susan"
+- Corrections persist to `~/.local/share/sentinel/corrections.json`
+
+### Acknowledging Collisions (ack)
+
+Some collisions are unavoidable. Acknowledge them to stop repeated warnings:
+
+```bash
+# Acknowledge a collision involving a node
+uv run sentinel ack "sunday-dinner"
+
+# List all acknowledged collisions
+uv run sentinel ack --list
+
+# Remove an acknowledgment (warnings will reappear)
+uv run sentinel ack "sunday-dinner" --remove
+```
+
+**Example Output:**
+
+```
+✓ Acknowledged collision: sunday-dinner
+  Collision will be hidden in future checks.
+  Use 'sentinel check --show-acked' to see all collisions.
+```
+
+**Notes:**
+- Acknowledgments persist to `~/.local/share/sentinel/acks.json`
+- Fuzzy matching works for node names
+- Use `sentinel check --show-acked` to see hidden collisions
 
 ### Debug Mode
 
