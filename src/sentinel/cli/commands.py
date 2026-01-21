@@ -24,8 +24,20 @@ from sentinel.core.constants import (
 )
 from sentinel.core.exceptions import IngestionError, PersistenceError
 from sentinel.core.matching import format_node_suggestions, fuzzy_find_node
-from sentinel.core.persistence import CorrectionStore, get_graph_db_path
-from sentinel.core.types import Correction, Graph, Node, ScoredCollision, strip_domain_prefix
+from sentinel.core.persistence import AcknowledgmentStore, CorrectionStore, get_graph_db_path
+from sentinel.core.rules import (
+    detect_cross_domain_collisions,
+    find_collision_by_label,
+    generate_collision_key,
+)
+from sentinel.core.types import (
+    Acknowledgment,
+    Correction,
+    Graph,
+    Node,
+    ScoredCollision,
+    strip_domain_prefix,
+)
 from sentinel.viz import render_ascii
 
 logger = logging.getLogger(__name__)
@@ -1054,6 +1066,213 @@ def correct_list(ctx: click.Context) -> None:
         raise
     except Exception:
         logger.exception("Unhandled exception in correct list command")
+        error_console.print("[red]Unexpected error[/red]")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+
+
+@main.command()
+@click.argument("label", required=False)
+@click.option(
+    "--list",
+    "-l",
+    "list_acks",
+    is_flag=True,
+    help="List all acknowledged collision warnings.",
+)
+@click.option(
+    "--remove",
+    "-r",
+    is_flag=True,
+    help="Remove an acknowledgment instead of adding one.",
+)
+@click.pass_context
+def ack(
+    ctx: click.Context,
+    label: str | None,
+    list_acks: bool,
+    remove: bool,
+) -> None:
+    """Acknowledge collision warnings to suppress them in future checks.
+
+    LABEL is the collision warning label to acknowledge (supports fuzzy matching).
+
+    Use --list to see all acknowledged collisions.
+    Use --remove with LABEL to remove an acknowledgment.
+
+    Examples:
+        sentinel ack "aunt-susan"           # Acknowledge collision
+        sentinel ack --list                 # List acknowledged
+        sentinel ack aunt-susan --remove    # Remove acknowledgment
+    """
+    from datetime import UTC, datetime
+
+    from sentinel.core.engine import CogneeEngine
+
+    # Handle --list flag
+    if list_acks:
+        try:
+            store = AcknowledgmentStore()
+            acks = store.load()
+
+            if not acks:
+                console.print("[dim]No acknowledgments yet.[/dim]")
+                console.print()
+                console.print(
+                    "Use [bold]sentinel ack <label>[/bold] to acknowledge a collision warning."
+                )
+                raise SystemExit(EXIT_SUCCESS)
+
+            console.print(f"[bold]Acknowledged collisions ({len(acks)}):[/bold]")
+            console.print()
+
+            for i, a in enumerate(acks, 1):
+                timestamp_display = ""
+                if a.timestamp:
+                    timestamp_display = f" [dim]({a.timestamp[:10]})[/dim]"
+
+                # Show key and path summary
+                path_summary = " → ".join(a.path[:3])
+                if len(a.path) > 3:
+                    path_summary += " → ..."
+
+                console.print(f"  {i}. [bold]{a.collision_key}[/bold]{timestamp_display}")
+                console.print(f"     [dim]{path_summary}[/dim]")
+
+            raise SystemExit(EXIT_SUCCESS)
+
+        except SystemExit:
+            raise
+        except Exception:
+            logger.exception("Unhandled exception in ack --list command")
+            error_console.print("[red]Unexpected error[/red]")
+            raise SystemExit(EXIT_INTERNAL_ERROR)
+
+    # Handle --remove flag
+    if remove:
+        if not label:
+            error_console.print("[red]Error:[/red] Label required with --remove flag.")
+            error_console.print("Usage: [bold]sentinel ack <label> --remove[/bold]")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        try:
+            store = AcknowledgmentStore()
+            acks = store.load()
+
+            # Find matching acknowledgment using fuzzy matching
+            normalized_label = label.lower().replace(" ", "-")
+            match = None
+            for ack in acks:
+                # Exact key match or exact node_label match
+                if ack.collision_key == normalized_label or ack.node_label.lower() == label.lower():
+                    match = ack
+                    break
+
+            # Fuzzy match if no exact match found
+            if match is None and acks:
+                from rapidfuzz import fuzz, process
+
+                labels = [a.node_label for a in acks]
+                result = process.extractOne(
+                    label.lower(),
+                    [lbl.lower() for lbl in labels],
+                    scorer=fuzz.WRatio,
+                )
+                if result and result[1] >= 70:  # FUZZY_THRESHOLD
+                    matched_idx = [lbl.lower() for lbl in labels].index(result[0])
+                    match = acks[matched_idx]
+
+            if match is not None:
+                store.remove_acknowledgment(match.collision_key)
+                console.print(
+                    f"[green]✓[/green] Removed acknowledgment for '{escape(match.node_label)}'"
+                )
+                raise SystemExit(EXIT_SUCCESS)
+            else:
+                error_console.print(
+                    f"[red]Error:[/red] No acknowledgment found for '{escape(label)}'"
+                )
+                # Show available acknowledgments
+                if acks:
+                    keys = [a.collision_key for a in acks]
+                    error_console.print(f"[dim]Available: {', '.join(keys)}[/dim]")
+                raise SystemExit(EXIT_USER_ERROR)
+
+        except SystemExit:
+            raise
+        except Exception:
+            logger.exception("Unhandled exception in ack --remove command")
+            error_console.print("[red]Unexpected error[/red]")
+            raise SystemExit(EXIT_INTERNAL_ERROR)
+
+    # Main acknowledgment flow - requires LABEL
+    if not label:
+        error_console.print("[red]Error:[/red] No label provided.")
+        error_console.print("Use [bold]sentinel ack <label>[/bold] to acknowledge a collision.")
+        error_console.print("Use [bold]sentinel ack --list[/bold] to see all acknowledgments.")
+        raise SystemExit(EXIT_USER_ERROR)
+
+    try:
+        engine = CogneeEngine()
+        graph = engine.load()
+
+        if graph is None:
+            error_console.print("[yellow]No schedule data found.[/yellow]")
+            error_console.print("Run [bold]sentinel paste[/bold] first to add your schedule.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Detect collisions
+        collisions = detect_cross_domain_collisions(graph)
+
+        if not collisions:
+            error_console.print("[yellow]No collisions detected.[/yellow]")
+            error_console.print(
+                "[dim]Run [bold]sentinel check[/bold] to analyze your schedule.[/dim]"
+            )
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Find collision by label (fuzzy match)
+        collision = find_collision_by_label(label, collisions)
+
+        if collision is None:
+            error_console.print(f"[red]Error:[/red] No collision found involving '{escape(label)}'")
+            # Show available collisions
+            console.print("[dim]Available collisions:[/dim]")
+            for c in collisions[:5]:  # Show first 5
+                key = generate_collision_key(c)
+                console.print(f"  - {key}")
+            if len(collisions) > 5:
+                console.print(f"  [dim]... and {len(collisions) - 5} more[/dim]")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Create acknowledgment
+        collision_key = generate_collision_key(collision)
+        node_label = strip_domain_prefix(collision.path[0]) if collision.path else label
+        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+        acknowledgment = Acknowledgment(
+            collision_key=collision_key,
+            node_label=node_label,
+            path=collision.path,
+            timestamp=now,
+        )
+
+        # Persist
+        store = AcknowledgmentStore()
+        store.add_acknowledgment(acknowledgment)
+
+        console.print(f"[green]✓[/green] Acknowledged: {escape(collision_key)} collision")
+        console.print("[dim]This warning will be suppressed in future checks.[/dim]")
+
+        raise SystemExit(EXIT_SUCCESS)
+
+    except PersistenceError as e:
+        logger.exception("Failed to load graph")
+        error_console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+    except SystemExit:
+        raise
+    except Exception:
+        logger.exception("Unhandled exception in ack command")
         error_console.print("[red]Unexpected error[/red]")
         raise SystemExit(EXIT_INTERNAL_ERROR)
 

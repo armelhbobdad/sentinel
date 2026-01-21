@@ -11,7 +11,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sentinel.core.types import Correction
+from sentinel.core.types import Acknowledgment, Correction
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,15 @@ def get_corrections_path() -> Path:
         Path to corrections.json file within Sentinel's data directory.
     """
     return get_xdg_data_home() / "corrections.json"
+
+
+def get_acks_path() -> Path:
+    """Get path to acknowledgments file.
+
+    Returns:
+        Path to acks.json file within Sentinel's data directory.
+    """
+    return get_xdg_data_home() / "acks.json"
 
 
 class CorrectionStore:
@@ -337,3 +346,172 @@ class CorrectionStore:
             return data.get("corrections", [])
         except (json.JSONDecodeError, KeyError, TypeError):
             return []
+
+
+class AcknowledgmentStore:
+    """Persistence layer for acknowledged collision warnings.
+
+    Manages loading, saving, and adding acknowledgments to a JSON file.
+    Uses atomic write pattern (temp file + rename) to prevent corruption.
+
+    Acknowledgments file schema (version 1.0):
+    {
+        "version": "1.0",
+        "acknowledgments": [
+            {
+                "collision_key": "aunt-susan",
+                "node_label": "Aunt Susan",
+                "path": ["Aunt Susan", "drained", "focused", "Monday presentation"],
+                "timestamp": "2026-01-21T18:00:00Z"
+            }
+        ]
+    }
+    """
+
+    def __init__(self) -> None:
+        """Initialize AcknowledgmentStore."""
+        self._acknowledgments: list[Acknowledgment] = []
+        self._loaded = False
+
+    def load(self) -> list[Acknowledgment]:
+        """Load acknowledgments from the acknowledgments file.
+
+        Returns:
+            List of acknowledgments. Empty list if file doesn't exist or is corrupted.
+        """
+        acks_path = get_acks_path()
+
+        if not acks_path.exists():
+            self._acknowledgments = []
+            self._loaded = True
+            return []
+
+        try:
+            with open(acks_path, encoding="utf-8") as f:
+                data = json.load(f)
+
+            acknowledgments = []
+            for item in data.get("acknowledgments", []):
+                # Convert path list back to tuple
+                path = tuple(item.get("path", []))
+                acknowledgments.append(
+                    Acknowledgment(
+                        collision_key=item["collision_key"],
+                        node_label=item["node_label"],
+                        path=path,
+                        timestamp=item.get("timestamp", ""),
+                    )
+                )
+
+            self._acknowledgments = acknowledgments
+            self._loaded = True
+            return acknowledgments
+
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            # Graceful degradation: return empty list on corrupted file
+            logger.warning("Acknowledgments file corrupted, ignoring: %s", e)
+            self._acknowledgments = []
+            self._loaded = True
+            return []
+
+    def save(self, acknowledgments: list[Acknowledgment]) -> None:
+        """Save acknowledgments to the acknowledgments file.
+
+        Uses atomic write (temp file + rename) to prevent corruption.
+
+        Args:
+            acknowledgments: List of acknowledgments to save.
+        """
+        ensure_data_directory()
+        acks_path = get_acks_path()
+
+        ack_records = []
+        for ack in acknowledgments:
+            record = {
+                "collision_key": ack.collision_key,
+                "node_label": ack.node_label,
+                "path": list(ack.path),  # Convert tuple to list for JSON
+                "timestamp": ack.timestamp,
+            }
+            ack_records.append(record)
+
+        data = {
+            "version": "1.0",
+            "acknowledgments": ack_records,
+        }
+
+        # Atomic write: write to temp, then rename
+        temp_path = acks_path.with_suffix(".tmp")
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            temp_path.replace(acks_path)  # Atomic on POSIX
+        finally:
+            # Clean up temp file if it still exists
+            try:
+                if temp_path.exists():
+                    temp_path.unlink()
+            except OSError:
+                pass  # Best effort cleanup
+
+        self._acknowledgments = acknowledgments
+
+    def add_acknowledgment(self, acknowledgment: Acknowledgment) -> None:
+        """Add a new acknowledgment and persist immediately.
+
+        Args:
+            acknowledgment: The acknowledgment to add.
+        """
+        # Ensure we have current state loaded
+        if not self._loaded:
+            self.load()
+
+        # Check for duplicate
+        for existing in self._acknowledgments:
+            if existing.collision_key == acknowledgment.collision_key:
+                # Already acknowledged, update timestamp
+                self._acknowledgments = [
+                    a
+                    for a in self._acknowledgments
+                    if a.collision_key != acknowledgment.collision_key
+                ]
+                break
+
+        # Add the new acknowledgment
+        self._acknowledgments.append(acknowledgment)
+
+        # Persist
+        self.save(self._acknowledgments)
+
+    def remove_acknowledgment(self, collision_key: str) -> bool:
+        """Remove an acknowledgment by collision key.
+
+        Args:
+            collision_key: The collision key to remove.
+
+        Returns:
+            True if acknowledgment was found and removed, False otherwise.
+        """
+        # Ensure we have current state loaded
+        if not self._loaded:
+            self.load()
+
+        # Find and remove
+        for i, ack in enumerate(self._acknowledgments):
+            if ack.collision_key == collision_key:
+                self._acknowledgments.pop(i)
+                self.save(self._acknowledgments)
+                return True
+
+        return False
+
+    def get_acknowledged_keys(self) -> set[str]:
+        """Get set of collision keys that have been acknowledged.
+
+        Returns:
+            Set of collision keys.
+        """
+        if not self._loaded:
+            self.load()
+
+        return {ack.collision_key for ack in self._acknowledgments}

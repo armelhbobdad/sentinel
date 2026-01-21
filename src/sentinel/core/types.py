@@ -150,3 +150,23 @@ class Correction:
     new_value: str | None = None
     target_node_id: str | None = None
     edge_relationship: str | None = None
+
+
+@dataclass(frozen=True)
+class Acknowledgment:
+    """An acknowledged collision warning.
+
+    Used to track which collision warnings the user has acknowledged
+    so they won't be displayed in future check runs.
+
+    Attributes:
+        collision_key: Unique key for this collision (derived from path).
+        node_label: Primary node label the user acknowledged (for display).
+        path: The collision path as displayed to user (immutable tuple).
+        timestamp: ISO timestamp when acknowledged.
+    """
+
+    collision_key: str
+    node_label: str
+    path: tuple[str, ...]
+    timestamp: str = ""
