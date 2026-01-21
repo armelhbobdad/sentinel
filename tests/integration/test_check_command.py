@@ -709,26 +709,28 @@ def _create_mixed_confidence_graph() -> Graph:
             confidence=0.88,
             metadata={},
         ),
-        # LOW confidence collision: Neighbor (0.35) -> tired -> focused
+        # LOW confidence collision: Neighbor (0.10) -> tired -> focused
+        # Even if combined with high-confidence REQUIRES (0.88), the average
+        # should stay well below 0.5 threshold: (0.10 + 0.15 + 0.88)/3 = 0.37
         Edge(
             source_id="person-neighbor",
             target_id="energystate-tired",
             relationship="DRAINS",
-            confidence=0.35,
+            confidence=0.10,
             metadata={},
         ),
         Edge(
             source_id="energystate-tired",
             target_id="energystate-focused",
             relationship="CONFLICTS_WITH",
-            confidence=0.40,
+            confidence=0.15,
             metadata={},
         ),
         Edge(
             source_id="activity-meeting",
             target_id="energystate-focused",
             relationship="REQUIRES",
-            confidence=0.45,
+            confidence=0.20,
             metadata={},
         ),
     )

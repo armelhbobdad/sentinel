@@ -11,6 +11,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from rapidfuzz import fuzz, process
+
 from sentinel.core.consolidation import consolidate_semantic_nodes
 from sentinel.core.constants import (
     AI_INFERRED_PENALTY,
@@ -30,7 +32,14 @@ from sentinel.core.constants import (
     REL_REQUIRES,
     SOCIAL_KEYWORDS,
 )
-from sentinel.core.types import Domain, Edge, Graph, Node, ScoredCollision
+from sentinel.core.types import (
+    Domain,
+    Edge,
+    Graph,
+    Node,
+    ScoredCollision,
+    strip_domain_prefix,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -654,3 +663,83 @@ def detect_cross_domain_collisions(graph: Graph) -> list[ScoredCollision]:
     collisions.sort(key=lambda c: c.confidence, reverse=True)
 
     return collisions
+
+
+# Fuzzy matching threshold for acknowledgments (consistent with corrections)
+FUZZY_THRESHOLD = 70
+
+
+def generate_collision_key(collision: ScoredCollision) -> str:
+    """Generate unique key for a collision based on its path.
+
+    Uses the first node label (typically the triggering entity)
+    normalized to lowercase with spaces replaced by dashes.
+
+    Args:
+        collision: The collision to generate a key for.
+
+    Returns:
+        Normalized collision key string.
+
+    Examples:
+        path=("Aunt Susan", "drained", ...) → "aunt-susan"
+        path=("[SOCIAL] Aunt Susan", ...) → "aunt-susan"
+    """
+    if not collision.path:
+        return "unknown"
+
+    first_label = collision.path[0]
+    # Strip domain prefix like "[SOCIAL]"
+    clean_label = strip_domain_prefix(first_label)
+    # Normalize: lowercase, replace spaces with dashes
+    return clean_label.lower().replace(" ", "-")
+
+
+def find_collision_by_label(
+    label: str,
+    collisions: list[ScoredCollision],
+) -> ScoredCollision | None:
+    """Find collision that matches the given label.
+
+    Uses fuzzy matching against the first node in each collision path.
+    Tries exact key match first, then falls back to fuzzy matching.
+
+    Args:
+        label: The label to search for.
+        collisions: List of collisions to search.
+
+    Returns:
+        The matching collision, or None if no match found.
+    """
+    if not collisions:
+        return None
+
+    # Build candidates: (collision, key, first_label)
+    candidates: list[tuple[ScoredCollision, str, str]] = []
+    for collision in collisions:
+        key = generate_collision_key(collision)
+        first_label = strip_domain_prefix(collision.path[0]) if collision.path else ""
+        candidates.append((collision, key, first_label))
+
+    # Exact key match first
+    normalized_label = label.lower().replace(" ", "-")
+    for collision, key, _ in candidates:
+        if key == normalized_label:
+            return collision
+
+    # Fuzzy match on first_label
+    labels = [c[2] for c in candidates]
+    if not labels:
+        return None
+
+    result = process.extractOne(
+        label.lower(),
+        [lbl.lower() for lbl in labels],
+        scorer=fuzz.WRatio,
+    )
+
+    if result and result[1] >= FUZZY_THRESHOLD:
+        matched_idx = [lbl.lower() for lbl in labels].index(result[0])
+        return candidates[matched_idx][0]
+
+    return None

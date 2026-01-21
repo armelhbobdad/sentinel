@@ -522,8 +522,12 @@ class GraphEngine(Protocol):
         """
         ...
 
-    def load(self) -> Graph | None:
+    def load(self, apply_corrections: bool = False) -> Graph | None:
         """Load persisted graph from storage.
+
+        Args:
+            apply_corrections: If True, apply stored corrections to filter
+                               out deleted nodes and their edges.
 
         Returns:
             Loaded graph, or None if no graph exists.
@@ -1207,6 +1211,11 @@ class CogneeEngine:
     def mutate(self, graph: Graph, correction: Correction) -> Graph:
         """Apply a correction to the graph.
 
+        Supports the following actions:
+        - 'delete': Remove node and cascade to connected edges (v1.0)
+        - 'modify_relationship': Change edge relationship type (v1.1)
+        - 'remove_edge': Remove specific edge, keep nodes (v1.1)
+
         Args:
             graph: The graph to mutate.
             correction: The correction to apply.
@@ -1215,9 +1224,123 @@ class CogneeEngine:
             New graph with the correction applied.
 
         Raises:
-            NotImplementedError: This is a stub implementation.
+            KeyError: If the node or edge doesn't exist in the graph.
+            ValueError: If trying to delete a user-stated node,
+                       if the action is not supported, or if new_value
+                       is not a valid edge type for modify_relationship.
         """
-        raise NotImplementedError("CogneeEngine.mutate not yet implemented")
+        if correction.action == "delete":
+            return self._mutate_delete(graph, correction)
+        elif correction.action == "modify_relationship":
+            return self._mutate_modify_relationship(graph, correction)
+        elif correction.action == "remove_edge":
+            return self._mutate_remove_edge(graph, correction)
+        else:
+            raise ValueError(
+                f"Unknown correction action '{correction.action}'. "
+                "Supported actions: delete, modify_relationship, remove_edge"
+            )
+
+    def _mutate_delete(self, graph: Graph, correction: Correction) -> Graph:
+        """Handle delete action: remove node and cascade to edges."""
+        # Find the node to delete
+        target_node = None
+        for node in graph.nodes:
+            if node.id == correction.node_id:
+                target_node = node
+                break
+
+        if target_node is None:
+            raise KeyError(f"Node '{correction.node_id}' not found in graph")
+
+        # Cannot delete user-stated nodes (AC: #2)
+        if target_node.source == "user-stated":
+            raise ValueError(
+                f"Cannot delete user-stated node '{target_node.label}'. "
+                "To modify your schedule, use `sentinel paste` to re-ingest."
+            )
+
+        # Remove the node
+        new_nodes = tuple(n for n in graph.nodes if n.id != correction.node_id)
+
+        # Cascade removal of all edges connected to this node (AC: #3)
+        new_edges = tuple(
+            e
+            for e in graph.edges
+            if e.source_id != correction.node_id and e.target_id != correction.node_id
+        )
+
+        return Graph(nodes=new_nodes, edges=new_edges)
+
+    def _mutate_modify_relationship(self, graph: Graph, correction: Correction) -> Graph:
+        """Handle modify_relationship action: change edge relationship type."""
+        source_id = correction.node_id
+        target_id = correction.target_node_id
+        new_relationship = correction.new_value
+
+        if target_id is None:
+            raise ValueError("modify_relationship requires target_node_id")
+        if new_relationship is None:
+            raise ValueError("modify_relationship requires new_value (relationship type)")
+
+        # Validate new relationship type (including ENERGIZES as valid for modifications)
+        valid_types = VALID_EDGE_TYPES | {"ENERGIZES"}
+        if new_relationship not in valid_types:
+            raise ValueError(
+                f"Invalid relationship type '{new_relationship}'. "
+                f"Valid types: {', '.join(sorted(valid_types))}"
+            )
+
+        # Find the edge to modify
+        edge_found = False
+        new_edges: list[Edge] = []
+        for edge in graph.edges:
+            if edge.source_id == source_id and edge.target_id == target_id:
+                # Replace with modified edge
+                new_edge = Edge(
+                    source_id=edge.source_id,
+                    target_id=edge.target_id,
+                    relationship=new_relationship,
+                    confidence=edge.confidence,
+                    metadata={
+                        **edge.metadata,
+                        "modified_from": edge.relationship,
+                        "user_corrected": True,
+                    },
+                )
+                new_edges.append(new_edge)
+                edge_found = True
+            else:
+                new_edges.append(edge)
+
+        if not edge_found:
+            raise KeyError(f"Edge from '{source_id}' to '{target_id}' not found in graph")
+
+        return Graph(nodes=graph.nodes, edges=tuple(new_edges))
+
+    def _mutate_remove_edge(self, graph: Graph, correction: Correction) -> Graph:
+        """Handle remove_edge action: remove specific edge, keep nodes."""
+        source_id = correction.node_id
+        target_id = correction.target_node_id
+
+        if target_id is None:
+            raise ValueError("remove_edge requires target_node_id")
+
+        # Find and remove the edge
+        edge_found = False
+        new_edges: list[Edge] = []
+        for edge in graph.edges:
+            if edge.source_id == source_id and edge.target_id == target_id:
+                edge_found = True
+                # Don't add this edge to new_edges
+            else:
+                new_edges.append(edge)
+
+        if not edge_found:
+            raise KeyError(f"Edge from '{source_id}' to '{target_id}' not found in graph")
+
+        # Nodes are preserved
+        return Graph(nodes=graph.nodes, edges=tuple(new_edges))
 
     def persist(self, graph: Graph) -> None:
         """Persist graph to JSON file.
@@ -1290,8 +1413,14 @@ class CogneeEngine:
             "metadata": dict(edge.metadata) if edge.metadata else {},
         }
 
-    def load(self) -> Graph | None:
+    def load(self, apply_corrections: bool = False) -> Graph | None:
         """Load persisted graph from JSON file.
+
+        Args:
+            apply_corrections: If True, apply stored corrections including:
+                - Node deletions (filter out nodes and their edges)
+                - Edge modifications (change relationship types)
+                - Edge removals (remove specific edges, keep nodes)
 
         Returns:
             Graph if successfully loaded, None if no graph.db file exists.
@@ -1311,7 +1440,13 @@ class CogneeEngine:
             nodes = tuple(self._dict_to_node(n) for n in data.get("nodes", []))
             edges = tuple(self._dict_to_edge(e) for e in data.get("edges", []))
 
-            return Graph(nodes=nodes, edges=edges)
+            graph = Graph(nodes=nodes, edges=edges)
+
+            # Apply corrections if requested (AC: #5, Story 3-2)
+            if apply_corrections:
+                graph = self._apply_corrections(graph)
+
+            return graph
 
         except json.JSONDecodeError as e:
             raise PersistenceError(
@@ -1321,6 +1456,83 @@ class CogneeEngine:
             raise PersistenceError(
                 "Graph database corrupted. Run `sentinel paste` to rebuild."
             ) from e
+
+    def _apply_corrections(self, graph: Graph) -> Graph:
+        """Apply all stored corrections to the graph.
+
+        Processes corrections in order:
+        1. Node deletions (filter out deleted nodes and their edges)
+        2. Edge modifications (change relationship types)
+        3. Edge removals (remove specific edges, keep nodes)
+
+        Args:
+            graph: The graph to apply corrections to.
+
+        Returns:
+            New graph with all corrections applied.
+        """
+        from sentinel.core.persistence import CorrectionStore
+
+        store = CorrectionStore()
+        corrections = store.load()
+
+        if not corrections:
+            return graph
+
+        # Group corrections by type
+        deleted_ids: set[str] = set()
+        edge_modifications: list[Correction] = []
+        edge_removals: list[Correction] = []
+
+        for correction in corrections:
+            if correction.action == "delete":
+                deleted_ids.add(correction.node_id)
+            elif correction.action == "modify_relationship":
+                edge_modifications.append(correction)
+            elif correction.action == "remove_edge":
+                edge_removals.append(correction)
+
+        # Apply node deletions first
+        if deleted_ids:
+            filtered_nodes = tuple(n for n in graph.nodes if n.id not in deleted_ids)
+            filtered_edges = tuple(
+                e
+                for e in graph.edges
+                if e.source_id not in deleted_ids and e.target_id not in deleted_ids
+            )
+            graph = Graph(nodes=filtered_nodes, edges=filtered_edges)
+
+        # Apply edge modifications
+        if edge_modifications:
+            edges_list = list(graph.edges)
+            for mod in edge_modifications:
+                for i, edge in enumerate(edges_list):
+                    if edge.source_id == mod.node_id and edge.target_id == mod.target_node_id:
+                        # Replace with modified edge
+                        new_edge = Edge(
+                            source_id=edge.source_id,
+                            target_id=edge.target_id,
+                            relationship=mod.new_value or edge.relationship,
+                            confidence=edge.confidence,
+                            metadata={
+                                **edge.metadata,
+                                "modified_from": edge.relationship,
+                                "user_corrected": True,
+                            },
+                        )
+                        edges_list[i] = new_edge
+                        break
+            graph = Graph(nodes=graph.nodes, edges=tuple(edges_list))
+
+        # Apply edge removals
+        if edge_removals:
+            removal_keys = {(rem.node_id, rem.target_node_id) for rem in edge_removals}
+            filtered_edges = tuple(
+                e for e in graph.edges if (e.source_id, e.target_id) not in removal_keys
+            )
+            graph = Graph(nodes=graph.nodes, edges=filtered_edges)
+
+        return graph
 
     def _dict_to_node(self, d: dict[str, Any]) -> Node:
         """Deserialize dictionary to Node."""

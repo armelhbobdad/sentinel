@@ -23,8 +23,21 @@ from sentinel.core.constants import (
     MEDIUM_CONFIDENCE,
 )
 from sentinel.core.exceptions import IngestionError, PersistenceError
-from sentinel.core.persistence import get_graph_db_path
-from sentinel.core.types import Graph, Node, ScoredCollision, strip_domain_prefix
+from sentinel.core.matching import format_node_suggestions, fuzzy_find_node
+from sentinel.core.persistence import AcknowledgmentStore, CorrectionStore, get_graph_db_path
+from sentinel.core.rules import (
+    detect_cross_domain_collisions,
+    find_collision_by_label,
+    generate_collision_key,
+)
+from sentinel.core.types import (
+    Acknowledgment,
+    Correction,
+    Graph,
+    Node,
+    ScoredCollision,
+    strip_domain_prefix,
+)
 from sentinel.viz import render_ascii
 
 logger = logging.getLogger(__name__)
@@ -398,8 +411,14 @@ def paste(ctx: click.Context) -> None:
     is_flag=True,
     help="Show all collisions including low-confidence speculative ones.",
 )
+@click.option(
+    "--show-acked",
+    "-a",
+    is_flag=True,
+    help="Show acknowledged collisions with [ACKED] label.",
+)
 @click.pass_context
-def check(ctx: click.Context, verbose: bool) -> None:
+def check(ctx: click.Context, verbose: bool, show_acked: bool) -> None:
     """Check your schedule for energy collisions.
 
     Analyzes the knowledge graph for collision patterns where energy-draining
@@ -410,19 +429,20 @@ def check(ctx: click.Context, verbose: bool) -> None:
     By default, only collisions with confidence >= 50% are shown. Use --verbose
     to see all collisions including low-confidence speculative ones.
 
+    Acknowledged collisions are hidden by default. Use --show-acked to display
+    them with an [ACKED] label.
+
     Examples:
         sentinel check              # Check for collisions in saved graph
         sentinel check --verbose    # Include low-confidence speculative collisions
+        sentinel check --show-acked # Show acknowledged collisions with [ACKED] label
         sentinel paste < schedule.txt && sentinel check   # Ingest then check
     """
     from rich.progress import Progress, SpinnerColumn, TextColumn
 
     from sentinel.core.engine import CogneeEngine
     from sentinel.core.exceptions import PersistenceError
-    from sentinel.core.rules import (
-        detect_cross_domain_collisions,
-        find_collision_paths_async,
-    )
+    from sentinel.core.rules import find_collision_paths_async
 
     debug = ctx.obj.get("debug", False)
     if debug:
@@ -430,7 +450,8 @@ def check(ctx: click.Context, verbose: bool) -> None:
 
     try:
         engine = CogneeEngine()
-        graph = engine.load()
+        # Apply corrections when loading (AC: #5 - deleted nodes filtered)
+        graph = engine.load(apply_corrections=True)
 
         if graph is None:
             error_console.print("[yellow]No schedule data found.[/yellow]")
@@ -492,36 +513,104 @@ def check(ctx: click.Context, verbose: bool) -> None:
 
         # Filter by confidence unless verbose (Story 2.4 AC #5)
         if verbose:
-            display_collisions = all_collisions
-            hidden_count = 0
+            confidence_filtered = all_collisions
+            low_confidence_hidden = 0
         else:
-            display_collisions = filter_collisions_by_confidence(all_collisions, MEDIUM_CONFIDENCE)
-            hidden_count = len(all_collisions) - len(display_collisions)
+            confidence_filtered = filter_collisions_by_confidence(all_collisions, MEDIUM_CONFIDENCE)
+            low_confidence_hidden = len(all_collisions) - len(confidence_filtered)
 
-        # If all collisions were filtered out, show success message
-        if not display_collisions:
+        # If all collisions were filtered out by confidence, show success message
+        if not confidence_filtered:
             # All collisions below threshold - show empty state with hidden count (AC #1)
             # NOTE: No ASCII graph rendering for empty state (AC #6)
-            display_empty_state(len(graph.edges), hidden_count)
+            display_empty_state(len(graph.edges), low_confidence_hidden)
+            raise SystemExit(EXIT_SUCCESS)
+
+        # Filter by acknowledgments (Story 3-4)
+        ack_store = AcknowledgmentStore()
+        acked_keys = ack_store.get_acknowledged_keys()
+
+        unacked_collisions: list[ScoredCollision] = []
+        acked_collisions: list[ScoredCollision] = []
+
+        for collision in confidence_filtered:
+            key = generate_collision_key(collision)
+            if key in acked_keys:
+                acked_collisions.append(collision)
+            else:
+                unacked_collisions.append(collision)
+
+        acked_count = len(acked_collisions)
+
+        # Determine display mode based on --show-acked flag
+        if show_acked:
+            # Show all collisions including acknowledged with [ACKED] label
+            display_collisions = unacked_collisions + acked_collisions
+        else:
+            display_collisions = unacked_collisions
+
+        # If all collisions are acknowledged and not showing acked, show success
+        if not display_collisions and acked_count > 0:
+            # All collisions acknowledged - special empty state (AC #6)
+            console.print("[green]✓[/green] NO NEW COLLISIONS")
+            console.print()
+            if acked_count == 1:
+                console.print(
+                    "[dim](1 acknowledged collision hidden. Use --show-acked to view)[/dim]"
+                )
+            else:
+                console.print(
+                    f"[dim]({acked_count} acknowledged collisions hidden. "
+                    "Use --show-acked to view)[/dim]"
+                )
             raise SystemExit(EXIT_SUCCESS)
 
         # Display each collision with formatted path and context (Story 2.3)
         console.print()  # Blank line for visual separation
         for i, collision in enumerate(display_collisions, 1):
-            display_collision_warning(collision, i, graph)
+            # Check if this collision is acknowledged (for [ACKED] label)
+            key = generate_collision_key(collision)
+            is_acked = key in acked_keys
+
+            if show_acked and is_acked:
+                # Display with [ACKED] label and dim styling
+                formatted_path = format_collision_path(collision)
+                console.print(f"[dim][ACKED] {formatted_path}[/dim]")
+            else:
+                display_collision_warning(collision, i, graph)
             console.print()  # Blank line between collisions
 
-        # Show summary with filtering info (Story 2.4 AC #5)
-        collision_count = len(display_collisions)
-        plural = "s" if collision_count != 1 else ""
-        summary = (
-            f"[yellow]Found {collision_count} collision{plural} affecting your schedule.[/yellow]"
-        )
-        console.print(summary)
-
-        if hidden_count > 0:
+        # Show summary with filtering info (Story 2.4 AC #5, Story 3-4 AC #5)
+        total_collisions = len(unacked_collisions) + acked_count
+        if show_acked:
+            # Summary for --show-acked mode
+            if acked_count > 0:
+                console.print(
+                    f"[bold]{total_collisions} collisions total[/bold] "
+                    f"[dim]({acked_count} acknowledged)[/dim]"
+                )
+            else:
+                plural = "s" if total_collisions != 1 else ""
+                console.print(
+                    f"[yellow]Found {total_collisions} collision{plural} "
+                    "affecting your schedule.[/yellow]"
+                )
+        else:
+            # Default summary (unacknowledged only)
+            unacked_count = len(unacked_collisions)
+            plural = "s" if unacked_count != 1 else ""
             console.print(
-                f"[dim]({hidden_count} low-confidence hidden, use --verbose to show)[/dim]"
+                f"[yellow]Found {unacked_count} collision{plural} affecting your schedule.[/yellow]"
+            )
+            if acked_count > 0:
+                console.print(
+                    f"[dim]({total_collisions} collisions detected, "
+                    f"{acked_count} acknowledged, hidden)[/dim]"
+                )
+
+        if low_confidence_hidden > 0:
+            console.print(
+                f"[dim]({low_confidence_hidden} low-confidence hidden, use --verbose to show)[/dim]"
             )
 
         # Show ASCII graph with collision paths highlighted (AC #4)
@@ -531,7 +620,11 @@ def check(ctx: click.Context, verbose: bool) -> None:
         ascii_output = render_ascii(graph, collision_paths=collision_paths)
         console.print(ascii_output, markup=False)
 
-        raise SystemExit(EXIT_COLLISION_DETECTED)
+        # Exit code based on unacknowledged collisions
+        if unacked_collisions:
+            raise SystemExit(EXIT_COLLISION_DETECTED)
+        else:
+            raise SystemExit(EXIT_SUCCESS)
 
     except PersistenceError as e:
         logger.exception("Failed to load graph")
@@ -542,6 +635,724 @@ def check(ctx: click.Context, verbose: bool) -> None:
     except Exception:
         logger.exception("Unhandled exception in check command")
         error_console.print("[red]Unexpected error during check[/red]")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+
+
+@main.group()
+@click.pass_context
+def correct(ctx: click.Context) -> None:
+    """Manage corrections to AI-inferred nodes.
+
+    Use these commands to delete incorrect AI-inferred nodes from your
+    knowledge graph or list existing corrections.
+
+    Example: sentinel correct delete "Drained"
+    Example: sentinel correct list
+    """
+    pass  # Group command doesn't do anything itself
+
+
+@correct.command(name="delete")
+@click.argument("node_label")
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip confirmation prompt.",
+)
+@click.pass_context
+def correct_delete(ctx: click.Context, node_label: str, yes: bool) -> None:
+    """Delete an AI-inferred node from the knowledge graph.
+
+    NODE_LABEL is the label of the node to delete (supports fuzzy matching).
+
+    Only AI-inferred nodes can be deleted. User-stated nodes from your
+    original schedule cannot be modified through this command.
+
+    Examples:
+        sentinel correct delete "Drained"           # Exact match
+        sentinel correct delete "Drainned" --yes    # Fuzzy match, skip confirmation
+    """
+    from sentinel.core.engine import CogneeEngine
+
+    try:
+        engine = CogneeEngine()
+        graph = engine.load()
+
+        if graph is None:
+            error_console.print("[yellow]No schedule data found.[/yellow]")
+            error_console.print("Run [bold]sentinel paste[/bold] first to add your schedule.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Find the node using fuzzy matching (ai-inferred only)
+        result = fuzzy_find_node(graph, node_label, ai_inferred_only=True)
+
+        if result.match is None:
+            if result.suggestions:
+                error_console.print(f"[red]Error:[/red] Node '{node_label}' not found.")
+                error_console.print()
+                error_console.print(format_node_suggestions(result.suggestions))
+            else:
+                error_console.print("[red]Error:[/red] No AI-inferred nodes found.")
+                error_console.print(
+                    "[dim]Only AI-inferred nodes can be deleted. "
+                    "User-stated nodes from your schedule cannot be modified.[/dim]"
+                )
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # If fuzzy match (not exact), ask for confirmation
+        if not result.is_exact and not yes:
+            console.print(f"[yellow]Did you mean '[bold]{result.match.label}[/bold]'?[/yellow]")
+            if not click.confirm("Delete this node?"):
+                console.print("[dim]Aborted.[/dim]")
+                raise SystemExit(EXIT_SUCCESS)
+
+        # For exact match without --yes, still confirm
+        if result.is_exact and not yes:
+            console.print(f"About to delete node: [bold]{result.match.label}[/bold]")
+            console.print(f"[dim]ID: {result.match.id}[/dim]")
+            console.print(f"[dim]Type: {result.match.type}[/dim]")
+            if not click.confirm("Are you sure?"):
+                console.print("[dim]Aborted.[/dim]")
+                raise SystemExit(EXIT_SUCCESS)
+
+        # Apply the correction
+        correction = Correction(node_id=result.match.id, action="delete")
+
+        try:
+            mutated_graph = engine.mutate(graph, correction)
+        except ValueError as e:
+            error_console.print(f"[red]Error:[/red] {e}")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Persist the correction
+        store = CorrectionStore()
+        store.add_correction(
+            correction,
+            reason=f"User deleted via CLI: {result.match.label}",
+        )
+
+        # Persist the mutated graph
+        engine.persist(mutated_graph)
+
+        console.print(f"[green]✓[/green] Deleted node '[bold]{result.match.label}[/bold]'")
+
+        # Show summary
+        removed_edges = len(graph.edges) - len(mutated_graph.edges)
+        if removed_edges > 0:
+            console.print(f"[dim]Removed {removed_edges} connected edge(s).[/dim]")
+
+        raise SystemExit(EXIT_SUCCESS)
+
+    except PersistenceError as e:
+        logger.exception("Failed to load/save graph")
+        error_console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+    except SystemExit:
+        raise
+    except Exception:
+        logger.exception("Unhandled exception in correct delete command")
+        error_console.print("[red]Unexpected error[/red]")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+
+
+@correct.command(name="modify")
+@click.argument("source_label")
+@click.option(
+    "--target",
+    "-t",
+    required=True,
+    help="Target node label for the edge to modify.",
+)
+@click.option(
+    "--relationship",
+    "-r",
+    required=True,
+    help="New relationship type (e.g., ENERGIZES, DRAINS).",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip confirmation prompt.",
+)
+@click.pass_context
+def correct_modify(
+    ctx: click.Context,
+    source_label: str,
+    target: str,
+    relationship: str,
+    yes: bool,
+) -> None:
+    """Modify the relationship type of an edge in the knowledge graph.
+
+    SOURCE_LABEL is the label of the source node (supports fuzzy matching).
+
+    Examples:
+        sentinel correct modify "Aunt Susan" --target "drained" --relationship ENERGIZES
+        sentinel correct modify "Aunt Susan" -t "drained" -r ENERGIZES --yes
+    """
+    from sentinel.core.engine import VALID_EDGE_TYPES, CogneeEngine
+
+    try:
+        engine = CogneeEngine()
+        graph = engine.load()
+
+        if graph is None:
+            error_console.print("[yellow]No schedule data found.[/yellow]")
+            error_console.print("Run [bold]sentinel paste[/bold] first to add your schedule.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Validate relationship type
+        valid_types = VALID_EDGE_TYPES | {"ENERGIZES"}
+        if relationship not in valid_types:
+            error_console.print(f"[red]Error:[/red] Invalid relationship type '{relationship}'.")
+            error_console.print(f"[dim]Valid types: {', '.join(sorted(valid_types))}[/dim]")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Find source node using fuzzy matching (all nodes, not just AI-inferred)
+        source_result = fuzzy_find_node(graph, source_label, ai_inferred_only=False)
+
+        if source_result.match is None:
+            if source_result.suggestions:
+                error_console.print(f"[red]Error:[/red] Source node '{source_label}' not found.")
+                error_console.print()
+                error_console.print(format_node_suggestions(source_result.suggestions))
+            else:
+                error_console.print(f"[red]Error:[/red] No nodes found matching '{source_label}'.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Find target node using fuzzy matching
+        target_result = fuzzy_find_node(graph, target, ai_inferred_only=False)
+
+        if target_result.match is None:
+            if target_result.suggestions:
+                error_console.print(f"[red]Error:[/red] Target node '{target}' not found.")
+                error_console.print()
+                error_console.print(format_node_suggestions(target_result.suggestions))
+            else:
+                error_console.print(f"[red]Error:[/red] No nodes found matching '{target}'.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        source_node = source_result.match
+        target_node = target_result.match
+
+        # Find the edge between these nodes
+        edge_found = None
+        for edge in graph.edges:
+            if edge.source_id == source_node.id and edge.target_id == target_node.id:
+                edge_found = edge
+                break
+
+        if edge_found is None:
+            error_console.print(
+                f"[red]Error:[/red] No edge found from "
+                f"'{source_node.label}' to '{target_node.label}'."
+            )
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # If fuzzy match (not exact), ask for confirmation
+        if (not source_result.is_exact or not target_result.is_exact) and not yes:
+            console.print("[yellow]Did you mean this edge?[/yellow]")
+            console.print(
+                f"  [bold]{source_node.label}[/bold] → {edge_found.relationship} → "
+                f"[bold]{target_node.label}[/bold]"
+            )
+            if not click.confirm("Modify this edge?"):
+                console.print("[dim]Aborted.[/dim]")
+                raise SystemExit(EXIT_SUCCESS)
+
+        # Confirm for exact match without --yes
+        if source_result.is_exact and target_result.is_exact and not yes:
+            console.print("About to modify edge:")
+            console.print(
+                f"  [bold]{source_node.label}[/bold] → {edge_found.relationship} → "
+                f"[bold]{target_node.label}[/bold]"
+            )
+            console.print(f"  New relationship: [bold]{relationship}[/bold]")
+            if not click.confirm("Are you sure?"):
+                console.print("[dim]Aborted.[/dim]")
+                raise SystemExit(EXIT_SUCCESS)
+
+        # Apply the correction
+        correction = Correction(
+            node_id=source_node.id,
+            action="modify_relationship",
+            new_value=relationship,
+            target_node_id=target_node.id,
+            edge_relationship=edge_found.relationship,
+        )
+
+        try:
+            mutated_graph = engine.mutate(graph, correction)
+        except ValueError as e:
+            error_console.print(f"[red]Error:[/red] {e}")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Persist the correction
+        store = CorrectionStore()
+        store.add_correction(
+            correction,
+            reason=f"User modified edge via CLI: {edge_found.relationship} → {relationship}",
+        )
+
+        # Persist the mutated graph
+        engine.persist(mutated_graph)
+
+        console.print(
+            f"[green]✓[/green] Modified edge: "
+            f"[bold]{source_node.label}[/bold] → [bold]{relationship}[/bold] → "
+            f"[bold]{target_node.label}[/bold]"
+        )
+        console.print(f"[dim]Changed from {edge_found.relationship}.[/dim]")
+
+        raise SystemExit(EXIT_SUCCESS)
+
+    except PersistenceError as e:
+        logger.exception("Failed to load/save graph")
+        error_console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+    except SystemExit:
+        raise
+    except Exception:
+        logger.exception("Unhandled exception in correct modify command")
+        error_console.print("[red]Unexpected error[/red]")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+
+
+@correct.command(name="remove-edge")
+@click.argument("source_label")
+@click.option(
+    "--target",
+    "-t",
+    required=True,
+    help="Target node label for the edge to remove.",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip confirmation prompt.",
+)
+@click.pass_context
+def correct_remove_edge(
+    ctx: click.Context,
+    source_label: str,
+    target: str,
+    yes: bool,
+) -> None:
+    """Remove a specific edge from the knowledge graph.
+
+    Removes the edge between source and target nodes while keeping both nodes.
+
+    SOURCE_LABEL is the label of the source node (supports fuzzy matching).
+
+    Examples:
+        sentinel correct remove-edge "Aunt Susan" --target "drained"
+        sentinel correct remove-edge "Aunt Susan" -t "drained" --yes
+    """
+    from sentinel.core.engine import CogneeEngine
+
+    try:
+        engine = CogneeEngine()
+        graph = engine.load()
+
+        if graph is None:
+            error_console.print("[yellow]No schedule data found.[/yellow]")
+            error_console.print("Run [bold]sentinel paste[/bold] first to add your schedule.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Find source node using fuzzy matching
+        source_result = fuzzy_find_node(graph, source_label, ai_inferred_only=False)
+
+        if source_result.match is None:
+            if source_result.suggestions:
+                error_console.print(f"[red]Error:[/red] Source node '{source_label}' not found.")
+                error_console.print()
+                error_console.print(format_node_suggestions(source_result.suggestions))
+            else:
+                error_console.print(f"[red]Error:[/red] No nodes found matching '{source_label}'.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Find target node using fuzzy matching
+        target_result = fuzzy_find_node(graph, target, ai_inferred_only=False)
+
+        if target_result.match is None:
+            if target_result.suggestions:
+                error_console.print(f"[red]Error:[/red] Target node '{target}' not found.")
+                error_console.print()
+                error_console.print(format_node_suggestions(target_result.suggestions))
+            else:
+                error_console.print(f"[red]Error:[/red] No nodes found matching '{target}'.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        source_node = source_result.match
+        target_node = target_result.match
+
+        # Find the edge between these nodes
+        edge_found = None
+        for edge in graph.edges:
+            if edge.source_id == source_node.id and edge.target_id == target_node.id:
+                edge_found = edge
+                break
+
+        if edge_found is None:
+            error_console.print(
+                f"[red]Error:[/red] No edge found from "
+                f"'{source_node.label}' to '{target_node.label}'."
+            )
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # If fuzzy match (not exact), ask for confirmation
+        if (not source_result.is_exact or not target_result.is_exact) and not yes:
+            console.print("[yellow]Did you mean this edge?[/yellow]")
+            console.print(
+                f"  [bold]{source_node.label}[/bold] → {edge_found.relationship} → "
+                f"[bold]{target_node.label}[/bold]"
+            )
+            if not click.confirm("Remove this edge?"):
+                console.print("[dim]Aborted.[/dim]")
+                raise SystemExit(EXIT_SUCCESS)
+
+        # Confirm for exact match without --yes
+        if source_result.is_exact and target_result.is_exact and not yes:
+            console.print("About to remove edge:")
+            console.print(
+                f"  [bold]{source_node.label}[/bold] → {edge_found.relationship} → "
+                f"[bold]{target_node.label}[/bold]"
+            )
+            if not click.confirm("Are you sure?"):
+                console.print("[dim]Aborted.[/dim]")
+                raise SystemExit(EXIT_SUCCESS)
+
+        # Apply the correction
+        correction = Correction(
+            node_id=source_node.id,
+            action="remove_edge",
+            target_node_id=target_node.id,
+            edge_relationship=edge_found.relationship,
+        )
+
+        try:
+            mutated_graph = engine.mutate(graph, correction)
+        except ValueError as e:
+            error_console.print(f"[red]Error:[/red] {e}")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Persist the correction
+        store = CorrectionStore()
+        store.add_correction(
+            correction,
+            reason=f"User removed edge via CLI: {source_node.label} → {target_node.label}",
+        )
+
+        # Persist the mutated graph
+        engine.persist(mutated_graph)
+
+        console.print(
+            f"[green]✓[/green] Removed edge: "
+            f"[bold]{source_node.label}[/bold] → {edge_found.relationship} → "
+            f"[bold]{target_node.label}[/bold]"
+        )
+        console.print("[dim]Both nodes have been preserved.[/dim]")
+
+        raise SystemExit(EXIT_SUCCESS)
+
+    except PersistenceError as e:
+        logger.exception("Failed to load/save graph")
+        error_console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+    except SystemExit:
+        raise
+    except Exception:
+        logger.exception("Unhandled exception in correct remove-edge command")
+        error_console.print("[red]Unexpected error[/red]")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+
+
+@correct.command(name="list")
+@click.pass_context
+def correct_list(ctx: click.Context) -> None:
+    """List all corrections made to the knowledge graph.
+
+    Shows deleted nodes, modified edges, and removed edges.
+
+    Example: sentinel correct list
+    """
+    try:
+        store = CorrectionStore()
+        records = store.load_records()
+
+        if not records:
+            console.print("[dim]No corrections have been made yet.[/dim]")
+            console.print()
+            console.print(
+                "Use [bold]sentinel correct delete <node>[/bold] "
+                "to delete incorrectly inferred nodes."
+            )
+            console.print(
+                "Use [bold]sentinel correct modify[/bold] to change edge relationship types."
+            )
+            console.print("Use [bold]sentinel correct remove-edge[/bold] to remove specific edges.")
+            raise SystemExit(EXIT_SUCCESS)
+
+        console.print(f"[bold]Corrections ({len(records)}):[/bold]")
+        console.print()
+
+        for i, record in enumerate(records, 1):
+            action = record.get("action", "unknown")
+            action_display = action.upper()
+            if action == "delete":
+                action_display = "[red]DELETE[/red]"
+            elif action == "modify_relationship":
+                action_display = "[yellow]MODIFY[/yellow]"
+            elif action == "remove_edge":
+                action_display = "[magenta]REMOVE_EDGE[/magenta]"
+
+            node_id = record.get("node_id", "unknown")
+            target_id = record.get("target_node_id", "")
+            new_value = record.get("new_value", "")
+            old_relationship = record.get("edge_relationship", "")
+            timestamp = record.get("timestamp", "")
+
+            # Format timestamp for display (show date only for brevity)
+            time_display = ""
+            if timestamp:
+                # Parse ISO format and show just the date
+                time_display = f" [dim]({timestamp[:10]})[/dim]"
+
+            # Format based on action type
+            if action == "delete":
+                console.print(f"  {i}. {action_display}: {node_id}{time_display}")
+            elif action == "modify_relationship":
+                # Show old→new relationship format
+                if old_relationship:
+                    rel_change = f"{old_relationship} → {new_value}"
+                else:
+                    rel_change = f"→ {new_value}"
+                console.print(
+                    f"  {i}. {action_display}: {node_id} → {target_id} "
+                    f"[dim]({rel_change})[/dim]{time_display}"
+                )
+            elif action == "remove_edge":
+                console.print(f"  {i}. {action_display}: {node_id} → {target_id}{time_display}")
+            else:
+                console.print(f"  {i}. {action_display}: {node_id}{time_display}")
+
+        raise SystemExit(EXIT_SUCCESS)
+
+    except SystemExit:
+        raise
+    except Exception:
+        logger.exception("Unhandled exception in correct list command")
+        error_console.print("[red]Unexpected error[/red]")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+
+
+@main.command()
+@click.argument("label", required=False)
+@click.option(
+    "--list",
+    "-l",
+    "list_acks",
+    is_flag=True,
+    help="List all acknowledged collision warnings.",
+)
+@click.option(
+    "--remove",
+    "-r",
+    is_flag=True,
+    help="Remove an acknowledgment instead of adding one.",
+)
+@click.pass_context
+def ack(
+    ctx: click.Context,
+    label: str | None,
+    list_acks: bool,
+    remove: bool,
+) -> None:
+    """Acknowledge collision warnings to suppress them in future checks.
+
+    LABEL is the collision warning label to acknowledge (supports fuzzy matching).
+
+    Use --list to see all acknowledged collisions.
+    Use --remove with LABEL to remove an acknowledgment.
+
+    Examples:
+        sentinel ack "aunt-susan"           # Acknowledge collision
+        sentinel ack --list                 # List acknowledged
+        sentinel ack aunt-susan --remove    # Remove acknowledgment
+    """
+    from datetime import UTC, datetime
+
+    from sentinel.core.engine import CogneeEngine
+
+    # Handle --list flag
+    if list_acks:
+        try:
+            store = AcknowledgmentStore()
+            acks = store.load()
+
+            if not acks:
+                console.print("[dim]No acknowledgments yet.[/dim]")
+                console.print()
+                console.print(
+                    "Use [bold]sentinel ack <label>[/bold] to acknowledge a collision warning."
+                )
+                raise SystemExit(EXIT_SUCCESS)
+
+            console.print(f"[bold]Acknowledged collisions ({len(acks)}):[/bold]")
+            console.print()
+
+            for i, a in enumerate(acks, 1):
+                timestamp_display = ""
+                if a.timestamp:
+                    timestamp_display = f" [dim]({a.timestamp[:10]})[/dim]"
+
+                # Show key and path summary
+                path_summary = " → ".join(a.path[:3])
+                if len(a.path) > 3:
+                    path_summary += " → ..."
+
+                console.print(f"  {i}. [bold]{a.collision_key}[/bold]{timestamp_display}")
+                console.print(f"     [dim]{path_summary}[/dim]")
+
+            raise SystemExit(EXIT_SUCCESS)
+
+        except SystemExit:
+            raise
+        except Exception:
+            logger.exception("Unhandled exception in ack --list command")
+            error_console.print("[red]Unexpected error[/red]")
+            raise SystemExit(EXIT_INTERNAL_ERROR)
+
+    # Handle --remove flag
+    if remove:
+        if not label:
+            error_console.print("[red]Error:[/red] Label required with --remove flag.")
+            error_console.print("Usage: [bold]sentinel ack <label> --remove[/bold]")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        try:
+            store = AcknowledgmentStore()
+            acks = store.load()
+
+            # Find matching acknowledgment using fuzzy matching
+            normalized_label = label.lower().replace(" ", "-")
+            match = None
+            for ack in acks:
+                # Exact key match or exact node_label match
+                if ack.collision_key == normalized_label or ack.node_label.lower() == label.lower():
+                    match = ack
+                    break
+
+            # Fuzzy match if no exact match found
+            if match is None and acks:
+                from rapidfuzz import fuzz, process
+
+                labels = [a.node_label for a in acks]
+                result = process.extractOne(
+                    label.lower(),
+                    [lbl.lower() for lbl in labels],
+                    scorer=fuzz.WRatio,
+                )
+                if result and result[1] >= 70:  # FUZZY_THRESHOLD
+                    matched_idx = [lbl.lower() for lbl in labels].index(result[0])
+                    match = acks[matched_idx]
+
+            if match is not None:
+                store.remove_acknowledgment(match.collision_key)
+                console.print(
+                    f"[green]✓[/green] Removed acknowledgment for '{escape(match.node_label)}'"
+                )
+                raise SystemExit(EXIT_SUCCESS)
+            else:
+                error_console.print(
+                    f"[red]Error:[/red] No acknowledgment found for '{escape(label)}'"
+                )
+                # Show available acknowledgments
+                if acks:
+                    keys = [a.collision_key for a in acks]
+                    error_console.print(f"[dim]Available: {', '.join(keys)}[/dim]")
+                raise SystemExit(EXIT_USER_ERROR)
+
+        except SystemExit:
+            raise
+        except Exception:
+            logger.exception("Unhandled exception in ack --remove command")
+            error_console.print("[red]Unexpected error[/red]")
+            raise SystemExit(EXIT_INTERNAL_ERROR)
+
+    # Main acknowledgment flow - requires LABEL
+    if not label:
+        error_console.print("[red]Error:[/red] No label provided.")
+        error_console.print("Use [bold]sentinel ack <label>[/bold] to acknowledge a collision.")
+        error_console.print("Use [bold]sentinel ack --list[/bold] to see all acknowledgments.")
+        raise SystemExit(EXIT_USER_ERROR)
+
+    try:
+        engine = CogneeEngine()
+        graph = engine.load()
+
+        if graph is None:
+            error_console.print("[yellow]No schedule data found.[/yellow]")
+            error_console.print("Run [bold]sentinel paste[/bold] first to add your schedule.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Detect collisions
+        collisions = detect_cross_domain_collisions(graph)
+
+        if not collisions:
+            error_console.print("[yellow]No collisions detected.[/yellow]")
+            error_console.print(
+                "[dim]Run [bold]sentinel check[/bold] to analyze your schedule.[/dim]"
+            )
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Find collision by label (fuzzy match)
+        collision = find_collision_by_label(label, collisions)
+
+        if collision is None:
+            error_console.print(f"[red]Error:[/red] No collision found involving '{escape(label)}'")
+            # Show available collisions
+            console.print("[dim]Available collisions:[/dim]")
+            for c in collisions[:5]:  # Show first 5
+                key = generate_collision_key(c)
+                console.print(f"  - {key}")
+            if len(collisions) > 5:
+                console.print(f"  [dim]... and {len(collisions) - 5} more[/dim]")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Create acknowledgment
+        collision_key = generate_collision_key(collision)
+        node_label = strip_domain_prefix(collision.path[0]) if collision.path else label
+        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+        acknowledgment = Acknowledgment(
+            collision_key=collision_key,
+            node_label=node_label,
+            path=collision.path,
+            timestamp=now,
+        )
+
+        # Persist
+        store = AcknowledgmentStore()
+        store.add_acknowledgment(acknowledgment)
+
+        console.print(f"[green]✓[/green] Acknowledged: {escape(collision_key)} collision")
+        console.print("[dim]This warning will be suppressed in future checks.[/dim]")
+
+        raise SystemExit(EXIT_SUCCESS)
+
+    except PersistenceError as e:
+        logger.exception("Failed to load graph")
+        error_console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+    except SystemExit:
+        raise
+    except Exception:
+        logger.exception("Unhandled exception in ack command")
+        error_console.print("[red]Unexpected error[/red]")
         raise SystemExit(EXIT_INTERNAL_ERROR)
 
 
