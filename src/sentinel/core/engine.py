@@ -315,6 +315,74 @@ FUZZY_CANDIDATES: dict[str, list[str]] = {
 # Default fuzzy matching threshold (0-100)
 DEFAULT_FUZZY_THRESHOLD: int = 50
 
+# Custom extraction prompt for energy-domain knowledge graphs (Story 2-7)
+# Guides Cognee's LLM to create correct graph topology for collision detection.
+# Token count: ~1100 tokens (well under 2000 token limit for optimal performance)
+SENTINEL_EXTRACTION_PROMPT: str = """\
+You are extracting a PERSONAL ENERGY knowledge graph for schedule conflict detection.
+
+**DOMAIN**: Personal scheduling, energy management, activity conflicts.
+
+**CRITICAL RULE**: When an activity DRAINS energy AND another activity REQUIRES
+that same energy type, you MUST create a CONFLICTS_WITH edge between them.
+This is the core pattern we need to detect.
+
+**REQUIRED RELATIONSHIP TYPES** (use ONLY these exact names):
+- DRAINS: Activity depletes energy/focus/motivation
+  (e.g., "exhausting dinner" DRAINS "emotional_energy")
+- REQUIRES: Activity needs energy/focus/resources
+  (e.g., "presentation" REQUIRES "mental_focus")
+- CONFLICTS_WITH: Connect energy states to activities that need them
+  (e.g., "low_energy" CONFLICTS_WITH "important_meeting")
+- SCHEDULED_AT: Activity occurs at time
+  (e.g., "dinner" SCHEDULED_AT "sunday_evening")
+- INVOLVES: Activity includes person/thing
+  (e.g., "dinner" INVOLVES "aunt_susan")
+
+**COLLISION PATTERN** (you MUST create this when applicable):
+[draining_activity] --DRAINS--> (energy_state) --CONFLICTS_WITH-->
+[requiring_activity] --REQUIRES--> (resource)
+
+**EXAMPLE 1** (Conflict scenario):
+Input: "Sunday: Emotionally draining dinner with complainers.
+Monday: Strategy presentation needs sharp focus."
+Expected Graph:
+- [dinner] --DRAINS--> (emotional_energy)
+- (emotional_energy) --CONFLICTS_WITH--> [strategy_presentation]
+- [strategy_presentation] --REQUIRES--> (sharp_focus)
+- [dinner] --SCHEDULED_AT--> [sunday]
+- [strategy_presentation] --SCHEDULED_AT--> [monday]
+
+**EXAMPLE 2** (Conflict scenario):
+Input: "Morning HIIT workout will exhaust me.
+Afternoon client meeting requires alertness."
+Expected Graph:
+- [hiit_workout] --DRAINS--> (physical_energy)
+- (physical_energy) --CONFLICTS_WITH--> [client_meeting]
+- [client_meeting] --REQUIRES--> (alertness)
+- [hiit_workout] --SCHEDULED_AT--> [morning]
+- [client_meeting] --SCHEDULED_AT--> [afternoon]
+
+**EXAMPLE 3** (No conflict):
+Input: "Monday standup meeting. Tuesday documentation work."
+Expected Graph:
+- [standup_meeting] --SCHEDULED_AT--> [monday]
+- [documentation_work] --SCHEDULED_AT--> [tuesday]
+(No DRAINS or CONFLICTS_WITH edges because neither activity drains energy)
+
+**INSTRUCTIONS**:
+1. Identify activities that DRAIN energy
+   (look for: draining, exhausting, tiring, stressful, overwhelming)
+2. Identify activities that REQUIRE energy
+   (look for: requires, needs, demands, important, critical)
+3. Create (energy_state) nodes as intermediaries
+4. ALWAYS connect draining activities to requiring activities via CONFLICTS_WITH
+   when they could impact each other
+5. Use snake_case for node IDs (e.g., "strategy_presentation" not "Strategy Presentation")
+
+Now extract the knowledge graph from the following text:
+"""
+
 
 def _fuzzy_match_relation(
     relation_type: str, threshold: int = DEFAULT_FUZZY_THRESHOLD
@@ -656,7 +724,7 @@ class CogneeEngine:
     and relationships from schedule text.
     """
 
-    async def ingest(self, text: str) -> Graph:
+    async def ingest(self, text: str, custom_prompt: str | None = None) -> Graph:
         """Ingest text and build a knowledge graph using Cognee.
 
         Calls Cognee's API to extract entities and relationships,
@@ -664,6 +732,9 @@ class CogneeEngine:
 
         Args:
             text: Schedule text to parse and convert to graph.
+            custom_prompt: Optional custom prompt for Cognee extraction.
+                Defaults to SENTINEL_EXTRACTION_PROMPT for energy-domain graphs.
+                Pass None to use Cognee's default extraction prompt.
 
         Returns:
             Graph containing extracted entities and relationships.
@@ -671,6 +742,9 @@ class CogneeEngine:
         Raises:
             IngestionError: If Cognee API call fails.
         """
+        # Use Sentinel's custom prompt by default for energy-domain extraction
+        prompt_to_use = custom_prompt if custom_prompt is not None else SENTINEL_EXTRACTION_PROMPT
+
         try:
             # Reset any previous state
             await cognee.prune.prune_data()
@@ -679,8 +753,12 @@ class CogneeEngine:
             # Add text to Cognee
             await cognee.add(text)
 
-            # Process with cognify (extracts entities + relationships)
-            await cognee.cognify()
+            # Process with cognify using custom extraction prompt (Story 2-7)
+            logger.debug(
+                "Using custom extraction prompt for cognify (length: %d chars)",
+                len(prompt_to_use),
+            )
+            await cognee.cognify(custom_prompt=prompt_to_use)
 
             # Query the graph for entities and relationships using Cypher
             # Get all nodes
