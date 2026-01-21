@@ -11,6 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from sentinel.core.consolidation import consolidate_semantic_nodes
 from sentinel.core.constants import (
     AI_INFERRED_PENALTY,
     CROSS_DOMAIN_BOOST,
@@ -174,6 +175,15 @@ def find_collision_paths(graph: Graph, max_depth: int = 3) -> list[CollisionPath
     2. BFS from each to find CONFLICTS_WITH → REQUIRES paths
     3. Return paths of length >= max_depth matching collision pattern
 
+    Special handling for REQUIRES edges: A common collision pattern involves
+    REQUIRES edges pointing back to the drained energy state:
+      Activity1 --DRAINS--> EnergyState --CONFLICTS_WITH--> Activity2
+      Activity2 --REQUIRES--> EnergyState (back to start!)
+
+    This is a valid collision (Activity2 requires the energy that Activity1 drained)
+    but would be blocked by standard BFS visited tracking. We allow REQUIRES edges
+    that point back to the energy state in the path.
+
     Args:
         graph: The graph to search for collision patterns.
         max_depth: Minimum path length to consider (default 3).
@@ -193,9 +203,10 @@ def find_collision_paths(graph: Graph, max_depth: int = 3) -> list[CollisionPath
     drains_edges = [e for e in graph.edges if e.relationship == REL_DRAINS]
 
     for start_edge in drains_edges:
+        energy_state_id = start_edge.target_id
         # BFS from the drained energy state
-        visited = {start_edge.source_id, start_edge.target_id}
-        bfs_queue: deque[tuple[str, list[Edge]]] = deque([(start_edge.target_id, [start_edge])])
+        visited = {start_edge.source_id, energy_state_id}
+        bfs_queue: deque[tuple[str, list[Edge]]] = deque([(energy_state_id, [start_edge])])
 
         while bfs_queue:
             current, path = bfs_queue.popleft()
@@ -209,6 +220,18 @@ def find_collision_paths(graph: Graph, max_depth: int = 3) -> list[CollisionPath
             for edge in adjacency.get(current, []):
                 # Determine next node (the other end of the edge)
                 next_node = edge.target_id if edge.source_id == current else edge.source_id
+
+                # Special case: REQUIRES edges pointing back to the energy state
+                # are valid for collision detection (Activity requires the drained energy)
+                if edge.relationship == REL_REQUIRES and next_node == energy_state_id:
+                    # Add this edge to complete the collision pattern, but don't continue BFS
+                    extended_path = path + [edge]
+                    if len(extended_path) >= max_depth:
+                        collision_path = CollisionPath(edges=tuple(extended_path))
+                        if collision_path.matches_collision_pattern():
+                            paths.append(collision_path)
+                    continue
+
                 if next_node not in visited:
                     visited.add(next_node)
                     bfs_queue.append((next_node, path + [edge]))
@@ -239,6 +262,9 @@ async def find_collision_paths_async(
 ) -> TraversalResult:
     """Find collision paths asynchronously with timeout support.
 
+    BUG-003: Now consolidates semantically equivalent nodes before
+    path finding to handle LLM node ID variance.
+
     Args:
         graph: The graph to search for collision patterns.
         max_depth: Minimum path length to consider (default 3).
@@ -260,11 +286,14 @@ async def find_collision_paths_async(
             relationships_analyzed=0,
         )
 
-    # Build adjacency list
-    adjacency = _build_adjacency_list(graph)
+    # BUG-003: Consolidate semantically equivalent nodes first
+    consolidated_graph = consolidate_semantic_nodes(graph)
 
-    # Find DRAINS edges as starting points
-    drains_edges = [e for e in graph.edges if e.relationship == REL_DRAINS]
+    # Build adjacency list on consolidated graph
+    adjacency = _build_adjacency_list(consolidated_graph)
+
+    # Find DRAINS edges as starting points (use consolidated graph)
+    drains_edges = [e for e in consolidated_graph.edges if e.relationship == REL_DRAINS]
 
     for start_edge in drains_edges:
         visited = {start_edge.source_id, start_edge.target_id}
@@ -492,7 +521,12 @@ def is_valid_collision(path: CollisionPath, graph: Graph) -> bool:
     1. Minimum 3 edges (DRAINS → CONFLICTS_WITH → REQUIRES)
     2. Matches collision pattern
     3. Start and end nodes are different (no self-loops)
-    4. Start is Person or Activity, end of REQUIRES is Activity
+    4. Start is Person, Activity, or TimeSlot (LLM often types events inconsistently)
+    5. REQUIRES source must be Activity or TimeSlot (scheduled events count as activities)
+
+    Note: Rules 4 and 5 accept TimeSlot because the LLM (Cognee) often types
+    scheduled activities like "strategy presentation" as TimeSlot instead of Activity.
+    Since these events can drain/require energy, they're functionally activities.
 
     Args:
         path: The collision path to validate.
@@ -516,16 +550,25 @@ def is_valid_collision(path: CollisionPath, graph: Graph) -> bool:
     # Build node lookup for type checking
     nodes = {n.id: n for n in graph.nodes}
 
-    # Rule 4: Start node must be Person or Activity
+    # Rule 4: Start node must be Person, Activity, or TimeSlot
+    # (TimeSlot allowed because LLM often types scheduled events as TimeSlot)
     start_node = nodes.get(path.start_node)
-    if start_node and start_node.type not in (NODE_TYPE_PERSON, NODE_TYPE_ACTIVITY):
+    if start_node and start_node.type not in (
+        NODE_TYPE_PERSON,
+        NODE_TYPE_ACTIVITY,
+        NODE_TYPE_TIME_SLOT,
+    ):
         return False
 
-    # Rule 5: REQUIRES edge source must be an Activity
+    # Rule 5: REQUIRES edge source must be Activity or TimeSlot
+    # (TimeSlot allowed because scheduled events that require energy are functionally activities)
     requires_edge = next((e for e in path.edges if e.relationship == REL_REQUIRES), None)
     if requires_edge:
         requires_source = nodes.get(requires_edge.source_id)
-        if requires_source and requires_source.type != NODE_TYPE_ACTIVITY:
+        if requires_source and requires_source.type not in (
+            NODE_TYPE_ACTIVITY,
+            NODE_TYPE_TIME_SLOT,
+        ):
             return False
 
     return True
@@ -562,26 +605,47 @@ def detect_cross_domain_collisions(graph: Graph) -> list[ScoredCollision]:
     It uses the Story 2.1 traversal infrastructure and enhances it
     with domain classification and false positive prevention.
 
+    BUG-003: Now consolidates semantically equivalent nodes before
+    path finding to handle LLM node ID variance.
+
     Args:
         graph: The graph to search for collision patterns.
 
     Returns:
         List of ScoredCollision objects with domain information.
     """
-    # Use Story 2.1's path finding
-    paths = find_collision_paths(graph)
+    # BUG-003: Consolidate semantically equivalent nodes first
+    # This enables BFS to traverse paths even when LLM generates
+    # different but equivalent node IDs (e.g., "low_energy" vs "energy_drain")
+    consolidated_graph = consolidate_semantic_nodes(graph)
+
+    # Log consolidation stats for debugging
+    original_count = len(graph.nodes)
+    consolidated_count = len(consolidated_graph.nodes)
+    if original_count != consolidated_count:
+        logger.debug(
+            "Consolidated %d nodes → %d (merged %d semantically equivalent)",
+            original_count,
+            consolidated_count,
+            original_count - consolidated_count,
+        )
+
+    # Use Story 2.1's path finding on consolidated graph
+    paths = find_collision_paths(consolidated_graph)
 
     if not paths:
         return []
 
     # Filter out invalid paths (false positive prevention)
-    valid_paths = [p for p in paths if is_valid_collision(p, graph)]
+    # Use consolidated graph since paths reference consolidated node IDs
+    valid_paths = [p for p in paths if is_valid_collision(p, consolidated_graph)]
 
     if not valid_paths:
         return []
 
     # Score each path with domain enhancement
-    collisions = [score_collision_with_domains(path, graph) for path in valid_paths]
+    # Use consolidated graph for node lookups
+    collisions = [score_collision_with_domains(path, consolidated_graph) for path in valid_paths]
 
     # Deduplicate paths
     collisions = deduplicate_collisions(collisions)

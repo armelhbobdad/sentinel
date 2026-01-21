@@ -132,3 +132,33 @@ METADATA_SOCIAL_HINTS: frozenset[str] = frozenset({"family", "aunt", "uncle", "c
 METADATA_PROFESSIONAL_HINTS: frozenset[str] = frozenset(
     {"colleague", "work", "boss", "client", "office"}
 )
+
+# Semantic node consolidation constants (BUG-003)
+# Keywords used to identify energy-related nodes for consolidation
+ENERGY_STATE_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "energy",
+        "exhaustion",
+        "drain",
+        "fatigue",
+        "tired",
+        "depleted",
+        "focus",
+        "concentration",
+        "alertness",
+        "sharpness",
+        "mental",
+    }
+)
+
+# RapidFuzz similarity threshold for node grouping (0-100 scale)
+# Default 70 balances precision and recall:
+# - Higher (80-90): fewer false merges, may miss valid groupings
+# - Lower (60): more merges, may incorrectly merge distinct concepts
+NODE_SIMILARITY_THRESHOLD: Final[int] = 70
+
+# Energy keyword boost: +50 points when both labels contain energy keywords
+# High boost ensures semantically related energy states (e.g., "emotional energy",
+# "sharp focus", "physical energy") are grouped together even when lexically different.
+# This is critical for BFS path finding in collision detection.
+ENERGY_KEYWORD_BOOST: Final[int] = 50
