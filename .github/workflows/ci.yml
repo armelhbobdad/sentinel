@@ -83,5 +83,5 @@ jobs:
 
       - name: Run live tests
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
         run: uv run pytest tests/ -m "${{ inputs.test_filter }}" --tb=short -v
