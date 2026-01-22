@@ -976,6 +976,7 @@ class TestCheckCommandVerboseFiltering:
         """Test check command with --verbose shows all collisions (AC #5).
 
         Story 2.4 AC #5: Can be shown with `--verbose` flag.
+        Updated for Story 5.5: --verbose is now a global flag on main group.
         """
         runner = CliRunner()
         graph = _create_mixed_confidence_graph()
@@ -984,7 +985,7 @@ class TestCheckCommandVerboseFiltering:
             "sentinel.core.engine.CogneeEngine.load",
             return_value=graph,
         ):
-            result = runner.invoke(main, ["check", "--verbose"])
+            result = runner.invoke(main, ["--verbose", "check"])
 
         assert result.exit_code == EXIT_COLLISION_DETECTED
         # Both collisions should be shown
@@ -999,6 +1000,7 @@ class TestCheckCommandVerboseFiltering:
         """Test check command with -v short flag (AC #5).
 
         Story 2.4: Support both --verbose and -v flags.
+        Updated for Story 5.5: -v is now a global flag on main group.
         """
         runner = CliRunner()
         graph = _create_mixed_confidence_graph()
@@ -1007,7 +1009,7 @@ class TestCheckCommandVerboseFiltering:
             "sentinel.core.engine.CogneeEngine.load",
             return_value=graph,
         ):
-            result = runner.invoke(main, ["check", "-v"])
+            result = runner.invoke(main, ["-v", "check"])
 
         assert result.exit_code == EXIT_COLLISION_DETECTED
         # LOW confidence collision should be visible with -v
@@ -1095,12 +1097,13 @@ class TestCheckCommandVerboseFiltering:
             )
 
     def test_check_verbose_flag_appears_in_help(self) -> None:
-        """Test --verbose flag documented in check command help.
+        """Test --verbose flag documented in main help.
 
         Story 2.4: Help text explains verbose behavior.
+        Updated for Story 5.5: --verbose is now a global flag documented in main help.
         """
         runner = CliRunner()
-        result = runner.invoke(main, ["check", "--help"])
+        result = runner.invoke(main, ["--help"])
 
         assert result.exit_code == 0
         assert "verbose" in result.output.lower(), (
@@ -1111,6 +1114,7 @@ class TestCheckCommandVerboseFiltering:
         """Test low-confidence collisions show SPECULATIVE styling when verbose (AC #5).
 
         Story 2.4 AC #5: LOW confidence shown as "SPECULATIVE" with dimmed styling.
+        Updated for Story 5.5: --verbose is now a global flag on main group.
         """
         runner = CliRunner()
         graph = _create_mixed_confidence_graph()
@@ -1119,7 +1123,7 @@ class TestCheckCommandVerboseFiltering:
             "sentinel.core.engine.CogneeEngine.load",
             return_value=graph,
         ):
-            result = runner.invoke(main, ["check", "--verbose"])
+            result = runner.invoke(main, ["--verbose", "check"])
 
         assert result.exit_code == EXIT_COLLISION_DETECTED
         # LOW confidence collision should show SPECULATIVE

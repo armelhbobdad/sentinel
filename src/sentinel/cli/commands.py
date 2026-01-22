@@ -15,6 +15,7 @@ from rich.panel import Panel
 from rich.status import Status
 
 from sentinel import __version__
+from sentinel.cli.verbose import get_verbose_logger
 from sentinel.core.config import (
     CONFIG_KEYS,
     ConfigError,
@@ -331,8 +332,13 @@ def _suppress_cognee_output(debug: bool) -> Iterator[None]:
         sys.stdout = old_stdout
 
 
-def _configure_logging(debug: bool) -> None:
-    """Configure logging levels based on debug flag."""
+def _configure_logging(debug: bool, verbose: bool = False) -> None:
+    """Configure logging levels based on debug and verbose flags.
+
+    Args:
+        debug: Enable full debug logging (structlog output).
+        verbose: Enable user-friendly verbose logging (not used here, handled by VerboseLogger).
+    """
     if debug:
         logging.basicConfig(level=logging.DEBUG)
     else:
@@ -343,19 +349,22 @@ def _configure_logging(debug: bool) -> None:
 
 @click.group()
 @click.option("--debug", "-d", is_flag=True, help="Enable debug logging output")
+@click.option("--verbose", "-v", is_flag=True, help="Enable verbose operation logging to stderr")
 @click.version_option(version=__version__, prog_name="sentinel")
 @click.pass_context
-def main(ctx: click.Context, debug: bool) -> None:
+def main(ctx: click.Context, debug: bool, verbose: bool) -> None:
     """Sentinel - Personal Energy Guardian CLI.
 
     Detect schedule conflicts that calendars miss. Sentinel uses knowledge graphs
     to find hidden energy collisions in your schedule.
 
-    Example: sentinel --help
+    \b
+    Example: sentinel paste < schedule.txt && sentinel check
     """
     ctx.ensure_object(dict)
     ctx.obj["debug"] = debug
-    _configure_logging(debug)
+    ctx.obj["verbose"] = verbose
+    _configure_logging(debug, verbose)
 
 
 @main.command()
@@ -380,14 +389,17 @@ def paste(ctx: click.Context, output_format: str, output: str | None) -> None:
 
     Read schedule text from stdin (interactive or piped).
 
+    \b
     Examples:
         sentinel paste                         # Interactive: type text, then Ctrl+D
         cat schedule.txt | sentinel paste      # Piped from file
         sentinel paste < schedule.txt          # Redirected from file
+        sentinel --verbose paste               # Show operation timing
         sentinel paste --format html           # Export as HTML file
         sentinel paste -f html -o my-graph.html  # Custom output filename
     """
     debug = ctx.obj.get("debug", False)
+    vlog = get_verbose_logger(ctx)  # Verbose logging (Story 5.5)
 
     # Warn if --output provided without --format html
     if output and output_format != "html":
@@ -397,7 +409,9 @@ def paste(ctx: click.Context, output_format: str, output: str | None) -> None:
 
     try:
         # Read all input from stdin (works for interactive and piped)
+        vlog.start_operation("Read stdin")
         text = sys.stdin.read()
+        vlog.end_operation("Read stdin", f"{len(text)} chars")
 
         # Validate input is not empty
         if not text.strip():
@@ -412,31 +426,38 @@ def paste(ctx: click.Context, output_format: str, output: str | None) -> None:
         console.print(f"[dim]Received {len(text)} characters.[/dim]")
 
         # Validate configuration before LLM operations (Story 5.3)
+        vlog.start_operation("Validate config")
         try:
             config = load_config()
             validate_api_key()
             check_embedding_compatibility(config)
+            vlog.end_operation("Validate config", f"provider={config.llm_provider}")
         except ConfigError as e:
+            vlog.end_operation("Validate config", "FAILED")
             error_console.print(f"[red]Error:[/red] {e}")
             raise SystemExit(EXIT_CONFIG_ERROR)
 
         # Build knowledge graph with progress indicator (AC #4)
         # Suppress Cognee's verbose logs unless --debug is passed
         # Import CogneeEngine lazily inside suppression context to catch import-time logs
+        vlog.start_operation("Build graph")
         with Status("[bold blue]Building knowledge graph...[/bold blue]", console=console):
             with _suppress_cognee_output(debug):
                 from sentinel.core.engine import CogneeEngine
 
                 engine = CogneeEngine()
                 graph = asyncio.run(engine.ingest(text))
+        vlog.end_operation("Build graph", f"{len(graph.nodes)} nodes, {len(graph.edges)} edges")
 
         # Show completion summary
         console.print(f"[green]✓[/green] Extracted {len(graph.nodes)} entities")
         console.print(f"[dim]Found {len(graph.edges)} relationships.[/dim]")
 
         # Persist the graph (Story 1.4)
+        vlog.start_operation("Persist graph")
         with Status("[bold blue]Saving knowledge graph...[/bold blue]", console=console):
             engine.persist(graph)
+        vlog.end_operation("Persist graph", "saved")
 
         db_path = get_graph_db_path()
         console.print(f"[green]✓[/green] Graph saved to {db_path}")
@@ -444,14 +465,18 @@ def paste(ctx: click.Context, output_format: str, output: str | None) -> None:
         # Handle output format (Story 4.4)
         if output_format == "html":
             # Generate HTML visualization
+            vlog.start_operation("Render HTML")
             html_content = render_html(graph)
             output_path = Path(output) if output else Path(DEFAULT_PASTE_HTML_FILENAME)
             if _write_html_file(output_path, html_content):
+                vlog.end_operation("Render HTML", str(output_path))
                 console.print(f"[green]✓[/green] Graph saved to {output_path}")
             else:
+                vlog.end_operation("Render HTML", "FAILED")
                 raise SystemExit(EXIT_INTERNAL_ERROR)
         else:
             # Render ASCII visualization (Story 1.5)
+            vlog.start_operation("Render ASCII")
             console.print()  # Blank line separator
             node_count = len(graph.nodes)
             edge_count = len(graph.edges)
@@ -461,6 +486,7 @@ def paste(ctx: click.Context, output_format: str, output: str | None) -> None:
             )
             with Status(status_msg, console=console):
                 ascii_output = render_ascii(graph)
+            vlog.end_operation("Render ASCII", f"{node_count} nodes")
 
             console.print("[bold]Knowledge Graph:[/bold]")
             # Use markup=False to prevent Rich from interpreting [label] as style tags
@@ -493,12 +519,6 @@ def paste(ctx: click.Context, output_format: str, output: str | None) -> None:
 
 @main.command()
 @click.option(
-    "--verbose",
-    "-v",
-    is_flag=True,
-    help="Show all collisions including low-confidence speculative ones.",
-)
-@click.option(
     "--show-acked",
     "-a",
     is_flag=True,
@@ -522,7 +542,6 @@ def paste(ctx: click.Context, output_format: str, output: str | None) -> None:
 @click.pass_context
 def check(
     ctx: click.Context,
-    verbose: bool,
     show_acked: bool,
     output_format: str,
     output: str | None,
@@ -534,17 +553,26 @@ def check(
 
     Pattern detected: DRAINS → CONFLICTS_WITH → REQUIRES
 
-    By default, only collisions with confidence >= 50% are shown. Use --verbose
-    to see all collisions including low-confidence speculative ones.
+    By default, only collisions with confidence >= threshold are shown.
+    Use --verbose to see operation details and include low-confidence speculative collisions.
 
     Acknowledged collisions are hidden by default. Use --show-acked to display
     them with an [ACKED] label.
 
+    \b
     Examples:
-        sentinel check              # Check for collisions in saved graph
-        sentinel check --verbose    # Include low-confidence speculative collisions
-        sentinel check --show-acked # Show acknowledged collisions with [ACKED] label
-        sentinel paste < schedule.txt && sentinel check   # Ingest then check
+        sentinel check                    # Check for collisions
+        sentinel --verbose check          # Show operation details
+        sentinel check --show-acked       # Include acknowledged collisions
+        sentinel check -f html            # Export as HTML report
+        sentinel check -f html -o report.html  # Custom output file
+
+    \b
+    Exit codes:
+        0 - No collisions (or all acknowledged)
+        1 - Collisions detected
+        2 - Internal error
+        3 - Configuration error
     """
     from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -553,15 +581,21 @@ def check(
     from sentinel.core.rules import find_collision_paths_async
 
     debug = ctx.obj.get("debug", False)
+    verbose = ctx.obj.get("verbose", False)  # Use global flag (Story 5.5 Task 6)
+    vlog = get_verbose_logger(ctx)  # Verbose operation logging
+
     if debug:
         logger.debug("Starting collision check")
 
     # Load configuration and validate API key (Story 5.2, 5.3 AC6)
+    vlog.start_operation("Load config")
     try:
         config = load_config()
         validate_api_key()
         check_embedding_compatibility(config)
+        vlog.end_operation("Load config", f"threshold={config.energy_threshold}")
     except ConfigError as e:
+        vlog.end_operation("Load config", "FAILED")
         error_console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(EXIT_CONFIG_ERROR)
 
@@ -582,14 +616,18 @@ def check(
         )
 
     try:
+        vlog.start_operation("Load graph")
         engine = CogneeEngine()
         # Apply corrections when loading (AC: #5 - deleted nodes filtered)
         graph = engine.load(apply_corrections=True)
 
         if graph is None:
+            vlog.end_operation("Load graph", "not found")
             error_console.print("[yellow]No schedule data found.[/yellow]")
             error_console.print("Run [bold]sentinel paste[/bold] first to add your schedule.")
             raise SystemExit(EXIT_USER_ERROR)
+
+        vlog.end_operation("Load graph", f"{len(graph.nodes)} nodes, {len(graph.edges)} edges")
 
         if not graph.edges:
             # No relationships to analyze - show empty state with 0 count (AC #5)
@@ -598,6 +636,7 @@ def check(
             raise SystemExit(EXIT_SUCCESS)
 
         # Track progress during traversal
+        vlog.start_operation("Analyze collisions")
         relationships_analyzed = [0]  # Mutable container for closure
 
         def update_progress(count: int) -> None:
@@ -634,6 +673,7 @@ def check(
 
         # Use domain-enhanced collision detection (Story 2.2/2.3)
         all_collisions = detect_cross_domain_collisions(graph)
+        vlog.end_operation("Analyze collisions", f"{len(all_collisions)} found")
 
         if not all_collisions:
             # No collisions detected - show positive empty state (AC #1)
@@ -816,6 +856,7 @@ def correct_delete(ctx: click.Context, node_label: str, yes: bool) -> None:
     Only AI-inferred nodes can be deleted. User-stated nodes from your
     original schedule cannot be modified through this command.
 
+    \b
     Examples:
         sentinel correct delete "Drained"           # Exact match
         sentinel correct delete "Drainned" --yes    # Fuzzy match, skip confirmation
@@ -935,6 +976,7 @@ def correct_modify(
 
     SOURCE_LABEL is the label of the source node (supports fuzzy matching).
 
+    \b
     Examples:
         sentinel correct modify "Aunt Susan" --target "drained" --relationship ENERGIZES
         sentinel correct modify "Aunt Susan" -t "drained" -r ENERGIZES --yes
@@ -1094,6 +1136,7 @@ def correct_remove_edge(
 
     SOURCE_LABEL is the label of the source node (supports fuzzy matching).
 
+    \b
     Examples:
         sentinel correct remove-edge "Aunt Susan" --target "drained"
         sentinel correct remove-edge "Aunt Susan" -t "drained" --yes
@@ -1325,6 +1368,7 @@ def ack(
     Use --list to see all acknowledged collisions.
     Use --remove with LABEL to remove an acknowledgment.
 
+    \b
     Examples:
         sentinel ack "aunt-susan"           # Acknowledge collision
         sentinel ack --list                 # List acknowledged
@@ -1545,6 +1589,7 @@ def graph_cmd(
 
     NODE can be a partial match - fuzzy matching will find close matches.
 
+    \b
     Examples:
         sentinel graph                      # Show full graph
         sentinel graph "Aunt Susan"         # Explore around Aunt Susan (depth 2)
