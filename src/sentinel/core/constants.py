@@ -162,3 +162,11 @@ NODE_SIMILARITY_THRESHOLD: Final[int] = 70
 # "sharp focus", "physical energy") are grouped together even when lexically different.
 # This is critical for BFS path finding in collision detection.
 ENERGY_KEYWORD_BOOST: Final[int] = 50
+
+# Graph exploration constants (Story 4.2)
+# MAX_EXPLORATION_DEPTH: Maximum hops for graph visualization (vs collision detection)
+# Collision detection uses MAX_DEPTH (3 hops) for cross-domain pattern finding
+# Graph exploration uses a higher limit (5) but caps for terminal readability
+MAX_EXPLORATION_DEPTH: Final[int] = 5
+DEFAULT_EXPLORATION_DEPTH: Final[int] = 2
+LARGE_GRAPH_THRESHOLD: Final[int] = 50  # Warn when neighborhood exceeds this

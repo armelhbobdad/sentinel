@@ -111,7 +111,9 @@ class TestGraphCommandWithNode:
         assert result.exit_code == EXIT_USER_ERROR, f"Expected exit code 1, got {result.exit_code}"
         assert "not found" in result.output.lower(), "Error message should say 'not found'"
         # AC#4: Should show suggestions when node not found
-        assert "Did you mean" in result.output, f"Should show suggestions. Output:\n{result.output}"
+        assert "Did you mean" in result.output, (
+            f"Should show 'Did you mean' suggestions. Output:\n{result.output}"
+        )
 
     def test_graph_shows_relationship_types(self, sample_graph: Graph) -> None:
         """Graph display shows relationship types on edges."""
@@ -144,10 +146,10 @@ class TestGraphCommandHelpText:
 
 
 class TestGraphCommandDepthOption:
-    """Tests for --depth option (preparation for Story 4-2)."""
+    """Tests for --depth option (Story 4-2: Depth Control for Exploration)."""
 
-    def test_graph_accepts_depth_option(self, sample_graph: Graph) -> None:
-        """sentinel graph --depth option is accepted."""
+    def test_graph_depth_1_shows_only_direct_connections(self, sample_graph: Graph) -> None:
+        """sentinel graph --depth 1 shows only directly connected nodes (AC#1)."""
         runner = CliRunner()
 
         with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
@@ -156,8 +158,16 @@ class TestGraphCommandDepthOption:
 
             result = runner.invoke(main, ["graph", "Aunt Susan", "--depth", "1"])
 
-        # Should accept the option without error (full depth control in Story 4-2)
         assert result.exit_code == EXIT_SUCCESS, f"Output: {result.output}"
+        # Direct connections from Aunt Susan: Drained (via DRAINS), Dinner (via INVOLVES)
+        # NOT direct: Strategy Presentation, High Focus (2+ hops away)
+        assert "Drained" in result.output, "Direct connection 'Drained' should appear"
+        assert "Strategy Presentation" not in result.output, (
+            f"Depth 1 should NOT show 'Strategy Presentation' (2+ hops). Output:\n{result.output}"
+        )
+        assert "High Focus" not in result.output, (
+            f"Depth 1 should NOT show 'High Focus' (2+ hops). Output:\n{result.output}"
+        )
 
     def test_graph_depth_0_shows_only_focal_node(self, sample_graph: Graph) -> None:
         """sentinel graph --depth 0 shows only the focal node."""
@@ -176,9 +186,190 @@ class TestGraphCommandDepthOption:
             f"Expected 0 relationships at depth 0. Output:\n{result.output}"
         )
 
+    def test_graph_default_depth_is_2(self, sample_graph: Graph) -> None:
+        """Default depth is 2 when not specified (AC#3)."""
+        runner = CliRunner()
 
-class TestGraphCommandIntegration:
-    """Integration tests for graph command with persistence."""
+        with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+            mock_engine = mock_engine_class.return_value
+            mock_engine.load.return_value = sample_graph
+
+            result = runner.invoke(main, ["graph", "Aunt Susan"])
+
+        assert result.exit_code == EXIT_SUCCESS, f"Output: {result.output}"
+        # Summary should mention depth 2
+        assert "depth 2" in result.output.lower(), (
+            f"Expected 'depth 2' in output. Output:\n{result.output}"
+        )
+
+    def test_graph_negative_depth_shows_error(self, sample_graph: Graph) -> None:
+        """Negative depth shows error (AC#5 edge case)."""
+        runner = CliRunner()
+
+        with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+            mock_engine = mock_engine_class.return_value
+            mock_engine.load.return_value = sample_graph
+
+            result = runner.invoke(main, ["graph", "Aunt Susan", "--depth", "-1"])
+
+        assert result.exit_code == EXIT_USER_ERROR, f"Expected exit 1. Output: {result.output}"
+        assert "non-negative" in result.output.lower() or "error" in result.output.lower(), (
+            f"Expected error message about non-negative depth. Output:\n{result.output}"
+        )
+
+    def test_graph_depth_exceeds_max_shows_warning_and_clamps(self, sample_graph: Graph) -> None:
+        """Depth > 5 shows warning and clamps to 5 (AC#4)."""
+        runner = CliRunner()
+
+        with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+            mock_engine = mock_engine_class.return_value
+            mock_engine.load.return_value = sample_graph
+
+            result = runner.invoke(main, ["graph", "Aunt Susan", "--depth", "10"])
+
+        assert result.exit_code == EXIT_SUCCESS, f"Output: {result.output}"
+        # Must show warning about maximum depth
+        assert "Maximum depth is 5" in result.output, (
+            f"Expected 'Maximum depth is 5' warning. Output:\n{result.output}"
+        )
+        # Summary should show depth 5 (clamped)
+        assert "depth 5" in result.output.lower(), (
+            f"Expected 'depth 5' in summary (clamped). Output:\n{result.output}"
+        )
+
+    @pytest.mark.parametrize("depth", [1, 2, 3, 4, 5])
+    def test_graph_valid_depths_succeed_without_warning(
+        self, sample_graph: Graph, depth: int
+    ) -> None:
+        """All valid depths (1-5) work without clamping warning."""
+        runner = CliRunner()
+
+        with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+            mock_engine = mock_engine_class.return_value
+            mock_engine.load.return_value = sample_graph
+
+            result = runner.invoke(main, ["graph", "Aunt Susan", "--depth", str(depth)])
+
+        assert result.exit_code == EXIT_SUCCESS, f"Output: {result.output}"
+        # No clamping warning for valid depths
+        assert "Maximum depth" not in result.output, (
+            f"Should not show clamping warning for depth {depth}. Output:\n{result.output}"
+        )
+
+    def test_graph_help_text_shows_depth_max(self) -> None:
+        """Help text mentions max depth limit (AC#4)."""
+        runner = CliRunner()
+
+        result = runner.invoke(main, ["graph", "--help"])
+
+        assert result.exit_code == 0
+        # Help should mention the max limit explicitly
+        assert "max: 5" in result.output.lower(), (
+            f"Help text should mention 'max: 5'. Output:\n{result.output}"
+        )
+
+    def test_graph_depth_3_shows_extended_connections(self, sample_graph: Graph) -> None:
+        """Depth 3 shows nodes up to 3 hops away (AC#2)."""
+        runner = CliRunner()
+
+        with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+            mock_engine = mock_engine_class.return_value
+            mock_engine.load.return_value = sample_graph
+
+            result = runner.invoke(main, ["graph", "Aunt Susan", "--depth", "3"])
+
+        assert result.exit_code == EXIT_SUCCESS, f"Output: {result.output}"
+        # Should show depth 3 in summary
+        assert "depth 3" in result.output.lower(), (
+            f"Expected 'depth 3' in output. Output:\n{result.output}"
+        )
+        # With depth 3 from Aunt Susan, should reach extended connections:
+        # Aunt Susan -> Drained (depth 1) -> High Focus (depth 2)
+        # Both MUST be visible at depth 3
+        assert "Drained" in result.output, (
+            f"Expected 'Drained' (depth 1) at depth 3. Output:\n{result.output}"
+        )
+        assert "High Focus" in result.output, (
+            f"Expected 'High Focus' (depth 2) at depth 3. Output:\n{result.output}"
+        )
+
+
+class TestGraphCommandLargeGraphWarning:
+    """Tests for large graph warning (Story 4-2 AC#6)."""
+
+    @pytest.fixture
+    def large_graph(self) -> Graph:
+        """Create a graph with more than 50 nodes for large graph testing."""
+        nodes = tuple(
+            Node(id=str(i), label=f"Node{i}", type="Entity", source="user-stated")
+            for i in range(60)  # 60 nodes to exceed threshold of 50
+        )
+        # Create a star topology from node 0 to all others
+        edges = tuple(
+            Edge(source_id="0", target_id=str(i), relationship="CONNECTS", confidence=0.9)
+            for i in range(1, 60)
+        )
+        return Graph(nodes=nodes, edges=edges)
+
+    def test_graph_large_result_shows_warning(self, large_graph: Graph) -> None:
+        """Large graph results (>50 nodes) show warning (AC#6)."""
+        runner = CliRunner()
+
+        with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+            mock_engine = mock_engine_class.return_value
+            mock_engine.load.return_value = large_graph
+
+            result = runner.invoke(main, ["graph", "Node0", "--depth", "5"])
+
+        assert result.exit_code == EXIT_SUCCESS, f"Output: {result.output}"
+        # Should show warning about large graph with node count
+        assert "Large graph" in result.output, (
+            f"Expected 'Large graph' warning. Output:\n{result.output}"
+        )
+        assert "60 nodes" in result.output, (
+            f"Expected node count in warning. Output:\n{result.output}"
+        )
+        # Should mention using lower depth for cleaner output
+        assert "Use lower --depth" in result.output, (
+            f"Expected 'Use lower --depth' guidance. Output:\n{result.output}"
+        )
+
+    def test_graph_under_threshold_no_warning(self, sample_graph: Graph) -> None:
+        """Graph under 50 nodes does not show large graph warning."""
+        runner = CliRunner()
+
+        with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+            mock_engine = mock_engine_class.return_value
+            mock_engine.load.return_value = sample_graph  # 5 nodes
+
+            result = runner.invoke(main, ["graph", "Aunt Susan", "--depth", "2"])
+
+        assert result.exit_code == EXIT_SUCCESS
+        # Should NOT show "Use lower" warning for small graphs
+        assert "Use lower" not in result.output, (
+            f"Should not show large graph warning for small graph. Output:\n{result.output}"
+        )
+
+    def test_graph_depth_5_performance(self, large_graph: Graph) -> None:
+        """Depth 5 completes within NFR4 (3 seconds) (AC: Task 4.8)."""
+        import time
+
+        runner = CliRunner()
+
+        with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+            mock_engine = mock_engine_class.return_value
+            mock_engine.load.return_value = large_graph
+
+            start = time.time()
+            result = runner.invoke(main, ["graph", "Node0", "--depth", "5"])
+            elapsed = time.time() - start
+
+        assert result.exit_code == EXIT_SUCCESS, f"Output: {result.output}"
+        assert elapsed < 3.0, f"Depth 5 took {elapsed:.2f}s, expected < 3s (NFR4)"
+
+
+class TestGraphCommandSubsetBehavior:
+    """Tests for graph neighborhood subset behavior."""
 
     def test_graph_shows_subset_of_full_graph(self, sample_graph: Graph) -> None:
         """Graph neighborhood contains subset of nodes from full graph."""

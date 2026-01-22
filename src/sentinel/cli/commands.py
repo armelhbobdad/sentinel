@@ -15,11 +15,14 @@ from rich.status import Status
 
 from sentinel import __version__
 from sentinel.core.constants import (
+    DEFAULT_EXPLORATION_DEPTH,
     EXIT_COLLISION_DETECTED,
     EXIT_INTERNAL_ERROR,
     EXIT_SUCCESS,
     EXIT_USER_ERROR,
     HIGH_CONFIDENCE,
+    LARGE_GRAPH_THRESHOLD,
+    MAX_EXPLORATION_DEPTH,
     MEDIUM_CONFIDENCE,
 )
 from sentinel.core.exceptions import IngestionError, PersistenceError
@@ -1362,8 +1365,11 @@ def ack(
     "--depth",
     "-d",
     type=int,
-    default=2,
-    help="Number of relationship hops to display (default: 2).",
+    default=DEFAULT_EXPLORATION_DEPTH,
+    help=(
+        f"Relationship hops to display "
+        f"(default: {DEFAULT_EXPLORATION_DEPTH}, max: {MAX_EXPLORATION_DEPTH})."
+    ),
 )
 @click.pass_context
 def graph_cmd(ctx: click.Context, node: str | None, depth: int) -> None:
@@ -1375,13 +1381,26 @@ def graph_cmd(ctx: click.Context, node: str | None, depth: int) -> None:
     NODE can be a partial match - fuzzy matching will find close matches.
 
     Examples:
-        sentinel graph                     # Show full graph
-        sentinel graph "Aunt Susan"        # Explore around Aunt Susan
-        sentinel graph "aunt" --depth 1    # Fuzzy match, depth 1
+        sentinel graph                      # Show full graph
+        sentinel graph "Aunt Susan"         # Explore around Aunt Susan (depth 2)
+        sentinel graph "aunt" --depth 1     # Fuzzy match, immediate neighbors only
+        sentinel graph "Aunt Susan" -d 3    # Extended connections (3 hops)
     """
     from sentinel.core.engine import CogneeEngine
 
     try:
+        # Validate depth range (Story 4-2 AC#4, AC#5)
+        if depth < 0:
+            error_console.print("[red]Error:[/red] Depth must be non-negative.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        if depth > MAX_EXPLORATION_DEPTH:
+            console.print(
+                f"[yellow]Warning:[/yellow] Maximum depth is {MAX_EXPLORATION_DEPTH}. "
+                f"Using --depth {MAX_EXPLORATION_DEPTH}."
+            )
+            depth = MAX_EXPLORATION_DEPTH
+
         engine = CogneeEngine()
         graph = engine.load(apply_corrections=True)
 
@@ -1423,6 +1442,16 @@ def graph_cmd(ctx: click.Context, node: str | None, depth: int) -> None:
         from sentinel.core.graph_ops import extract_neighborhood
 
         neighborhood = extract_neighborhood(graph, focal_node, depth=depth)
+
+        # Check for large graph warning (Story 4-2 AC#6)
+        # Note: We warn but don't truncate - users may want full context.
+        # The warning guides them to use lower depth for cleaner output.
+        total_nodes = len(neighborhood.nodes)
+        if total_nodes > LARGE_GRAPH_THRESHOLD:
+            console.print(
+                f"[yellow]Warning:[/yellow] Large graph ({total_nodes} nodes). "
+                "Use lower --depth for cleaner output."
+            )
 
         # Render with focal node highlighted
         output = render_ascii(neighborhood, focal_node_label=focal_node.label)
