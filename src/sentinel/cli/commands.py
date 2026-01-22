@@ -1356,5 +1356,99 @@ def ack(
         raise SystemExit(EXIT_INTERNAL_ERROR)
 
 
+@main.command(name="graph")
+@click.argument("node", required=False)
+@click.option(
+    "--depth",
+    "-d",
+    type=int,
+    default=2,
+    help="Number of relationship hops to display (default: 2).",
+)
+@click.pass_context
+def graph_cmd(ctx: click.Context, node: str | None, depth: int) -> None:
+    """Explore the knowledge graph around a specific node.
+
+    If NODE is provided, displays the neighborhood around that node.
+    If NODE is omitted, displays the entire graph.
+
+    NODE can be a partial match - fuzzy matching will find close matches.
+
+    Examples:
+        sentinel graph                     # Show full graph
+        sentinel graph "Aunt Susan"        # Explore around Aunt Susan
+        sentinel graph "aunt" --depth 1    # Fuzzy match, depth 1
+    """
+    from sentinel.core.engine import CogneeEngine
+
+    try:
+        engine = CogneeEngine()
+        graph = engine.load(apply_corrections=True)
+
+        if graph is None or not graph.nodes:
+            error_console.print("[red]Error:[/red] No graph found. Run `sentinel paste` first.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Full graph display if no node specified
+        if node is None:
+            output = render_ascii(graph)
+            console.print(output, markup=False)
+            raise SystemExit(EXIT_SUCCESS)
+
+        # Find the focal node with fuzzy matching (allow ALL nodes)
+        match_result = fuzzy_find_node(
+            graph,
+            node,
+            ai_inferred_only=False,  # Allow matching ANY node for graph exploration
+        )
+
+        if match_result.match is None:
+            # No match found - show error with suggestions
+            error_console.print(f"[red]Error:[/red] Node '{escape(node)}' not found in graph.")
+            if match_result.suggestions:
+                console.print()
+                console.print(format_node_suggestions(match_result.suggestions))
+            raise SystemExit(EXIT_USER_ERROR)
+
+        focal_node = match_result.match
+
+        # Show fuzzy match notice if not exact
+        if not match_result.is_exact:
+            console.print(
+                f"[dim]Matched: {escape(focal_node.label)} (score: {match_result.score:.0f}%)[/dim]"
+            )
+            console.print()
+
+        # Extract neighborhood (uses core/graph_ops.py)
+        from sentinel.core.graph_ops import extract_neighborhood
+
+        neighborhood = extract_neighborhood(graph, focal_node, depth=depth)
+
+        # Render with focal node highlighted
+        output = render_ascii(neighborhood, focal_node_label=focal_node.label)
+        console.print(output, markup=False)
+
+        # Summary
+        console.print()
+        console.print(
+            f"[dim]Showing {len(neighborhood.nodes)} nodes, "
+            f"{len(neighborhood.edges)} relationships "
+            f"(depth {depth} from {escape(focal_node.label)})[/dim]"
+        )
+
+        raise SystemExit(EXIT_SUCCESS)
+
+    except PersistenceError as e:
+        logger.exception("Failed to load graph")
+        error_console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+    except SystemExit:
+        raise
+    except Exception:
+        logger.exception("Unhandled exception in graph command")
+        error_console.print("[red]Unexpected error[/red]")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+
+
 if __name__ == "__main__":
     main()
