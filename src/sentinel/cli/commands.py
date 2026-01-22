@@ -19,6 +19,7 @@ from sentinel.core.constants import (
     DEFAULT_CHECK_HTML_FILENAME,
     DEFAULT_EXPLORATION_DEPTH,
     DEFAULT_GRAPH_HTML_FILENAME,
+    DEFAULT_PASTE_HTML_FILENAME,
     EXIT_COLLISION_DETECTED,
     EXIT_INTERNAL_ERROR,
     EXIT_SUCCESS,
@@ -341,16 +342,33 @@ def main(ctx: click.Context, debug: bool) -> None:
 
 
 @main.command()
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["text", "html"]),
+    default="text",
+    help="Output format: text (terminal) or html (file).",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=str,
+    default=None,
+    help="Output file path for HTML export (default: sentinel-paste.html).",
+)
 @click.pass_context
-def paste(ctx: click.Context) -> None:
+def paste(ctx: click.Context, output_format: str, output: str | None) -> None:
     """Paste your schedule text for analysis.
 
     Read schedule text from stdin (interactive or piped).
 
     Examples:
-        sentinel paste              # Interactive: type text, then Ctrl+D
-        cat schedule.txt | sentinel paste   # Piped from file
-        sentinel paste < schedule.txt       # Redirected from file
+        sentinel paste                         # Interactive: type text, then Ctrl+D
+        cat schedule.txt | sentinel paste      # Piped from file
+        sentinel paste < schedule.txt          # Redirected from file
+        sentinel paste --format html           # Export as HTML file
+        sentinel paste -f html -o my-graph.html  # Custom output filename
     """
     debug = ctx.obj.get("debug", False)
 
@@ -391,25 +409,35 @@ def paste(ctx: click.Context) -> None:
         db_path = get_graph_db_path()
         console.print(f"[green]✓[/green] Graph saved to {db_path}")
 
-        # Render ASCII visualization (Story 1.5)
-        console.print()  # Blank line separator
-        node_count = len(graph.nodes)
-        edge_count = len(graph.edges)
-        status_msg = (
-            f"[bold blue]Visualizing {node_count} entities "
-            f"and {edge_count} relationships...[/bold blue]"
-        )
-        with Status(status_msg, console=console):
-            ascii_output = render_ascii(graph)
+        # Handle output format (Story 4.4)
+        if output_format == "html":
+            # Generate HTML visualization
+            html_content = render_html(graph)
+            output_path = Path(output) if output else Path(DEFAULT_PASTE_HTML_FILENAME)
+            if _write_html_file(output_path, html_content):
+                console.print(f"[green]✓[/green] Graph saved to {output_path}")
+            else:
+                raise SystemExit(EXIT_INTERNAL_ERROR)
+        else:
+            # Render ASCII visualization (Story 1.5)
+            console.print()  # Blank line separator
+            node_count = len(graph.nodes)
+            edge_count = len(graph.edges)
+            status_msg = (
+                f"[bold blue]Visualizing {node_count} entities "
+                f"and {edge_count} relationships...[/bold blue]"
+            )
+            with Status(status_msg, console=console):
+                ascii_output = render_ascii(graph)
 
-        console.print("[bold]Knowledge Graph:[/bold]")
-        # Use markup=False to prevent Rich from interpreting [label] as style tags
-        # Our node labels use [label] for user-stated nodes
-        console.print(ascii_output, markup=False)
+            console.print("[bold]Knowledge Graph:[/bold]")
+            # Use markup=False to prevent Rich from interpreting [label] as style tags
+            # Our node labels use [label] for user-stated nodes
+            console.print(ascii_output, markup=False)
 
-        # Add legend explaining node styling
-        console.print()
-        console.print("[dim]Legend: [name] = user-stated, (name) = AI-inferred[/dim]")
+            # Add legend explaining node styling
+            console.print()
+            console.print("[dim]Legend: [name] = user-stated, (name) = AI-inferred[/dim]")
 
         raise SystemExit(EXIT_SUCCESS)
 
@@ -1434,7 +1462,7 @@ def ack(
     "output_format",
     type=click.Choice(["text", "html"]),
     default="text",
-    help="Output format: text (ASCII) or html (file).",
+    help="Output format: text (terminal) or html (file).",
 )
 @click.option(
     "--output",

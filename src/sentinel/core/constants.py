@@ -171,6 +171,7 @@ MAX_EXPLORATION_DEPTH: Final[int] = 5
 DEFAULT_EXPLORATION_DEPTH: Final[int] = 2
 LARGE_GRAPH_THRESHOLD: Final[int] = 50  # Warn when neighborhood exceeds this
 
-# HTML export default filenames (Story 4.3)
+# HTML export default filenames (Story 4.3, 4.4)
 DEFAULT_GRAPH_HTML_FILENAME: Final[str] = "sentinel-graph.html"
 DEFAULT_CHECK_HTML_FILENAME: Final[str] = "sentinel-check.html"
+DEFAULT_PASTE_HTML_FILENAME: Final[str] = "sentinel-paste.html"
