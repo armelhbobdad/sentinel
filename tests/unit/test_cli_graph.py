@@ -391,3 +391,253 @@ class TestGraphCommandSubsetBehavior:
             assert "Showing" in neighborhood_result.output
             # Strategy Presentation is not connected to Aunt Susan, should not appear
             assert "Strategy Presentation" not in neighborhood_result.output
+
+
+class TestGraphCommandFormatOption:
+    """Tests for --format option (Story 4-3: HTML Export)."""
+
+    def test_graph_format_text_is_default(self, sample_graph: Graph, tmp_path: Path) -> None:
+        """Default format is text (ASCII), no HTML file created (AC#1)."""
+        runner = CliRunner()
+
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = sample_graph
+
+                result = runner.invoke(main, ["graph"])
+
+            assert result.exit_code == EXIT_SUCCESS
+            # Should NOT create HTML file with default format
+            assert not Path("sentinel-graph.html").exists(), (
+                "Default format should not create HTML file"
+            )
+            # Should show ASCII-style output
+            assert "[Aunt Susan]" in result.output or "Aunt Susan" in result.output
+
+    def test_graph_format_html_creates_file(self, sample_graph: Graph, tmp_path: Path) -> None:
+        """sentinel graph --format html creates HTML file (AC#1)."""
+        runner = CliRunner()
+
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = sample_graph
+
+                result = runner.invoke(main, ["graph", "--format", "html"])
+
+            assert result.exit_code == EXIT_SUCCESS, f"Output: {result.output}"
+            assert Path("sentinel-graph.html").exists(), "HTML file should be created"
+            # Should confirm file was saved
+            assert "sentinel-graph.html" in result.output
+
+    def test_graph_format_html_default_filename(self, sample_graph: Graph, tmp_path: Path) -> None:
+        """HTML export defaults to sentinel-graph.html (AC#2)."""
+        runner = CliRunner()
+
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = sample_graph
+
+                result = runner.invoke(main, ["graph", "--format", "html"])
+
+            assert result.exit_code == EXIT_SUCCESS
+            html_file = Path("sentinel-graph.html")
+            assert html_file.exists(), "Should create sentinel-graph.html by default"
+            # Verify it's valid HTML
+            content = html_file.read_text()
+            assert "<!DOCTYPE html>" in content
+            assert "Aunt Susan" in content
+
+    def test_graph_output_option_custom_filename(self, sample_graph: Graph, tmp_path: Path) -> None:
+        """--output option creates file at specified path (AC#3)."""
+        runner = CliRunner()
+
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = sample_graph
+
+                result = runner.invoke(
+                    main, ["graph", "--format", "html", "--output", "my-graph.html"]
+                )
+
+            assert result.exit_code == EXIT_SUCCESS, f"Output: {result.output}"
+            assert Path("my-graph.html").exists(), "Custom filename should be created"
+            assert not Path("sentinel-graph.html").exists(), (
+                "Default filename should not be created when custom specified"
+            )
+            # Should confirm custom path
+            assert "my-graph.html" in result.output
+
+    def test_graph_format_html_is_self_contained(self, sample_graph: Graph, tmp_path: Path) -> None:
+        """HTML output is self-contained with no external dependencies (AC#4, AC#5)."""
+        runner = CliRunner()
+
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = sample_graph
+
+                result = runner.invoke(main, ["graph", "--format", "html"])
+
+            assert result.exit_code == EXIT_SUCCESS
+            content = Path("sentinel-graph.html").read_text()
+            # No external URLs
+            assert "http://" not in content, "HTML should not have external HTTP URLs"
+            assert "https://" not in content, "HTML should not have external HTTPS URLs"
+            # Has inline CSS
+            assert "<style>" in content, "HTML should have inline CSS"
+            # Has SVG visualization
+            assert "<svg" in content, "HTML should have SVG visualization"
+
+    def test_graph_format_html_labels_nodes(self, sample_graph: Graph, tmp_path: Path) -> None:
+        """HTML visualization clearly labels nodes (AC#5)."""
+        runner = CliRunner()
+
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = sample_graph
+
+                result = runner.invoke(main, ["graph", "--format", "html"])
+
+            assert result.exit_code == EXIT_SUCCESS
+            content = Path("sentinel-graph.html").read_text()
+            # All node labels should appear
+            assert "Aunt Susan" in content
+            assert "Dinner" in content
+            assert "Drained" in content
+
+    def test_graph_format_html_labels_edges(self, sample_graph: Graph, tmp_path: Path) -> None:
+        """HTML visualization clearly labels edges (AC#5)."""
+        runner = CliRunner()
+
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = sample_graph
+
+                result = runner.invoke(main, ["graph", "--format", "html"])
+
+            assert result.exit_code == EXIT_SUCCESS
+            content = Path("sentinel-graph.html").read_text()
+            # Edge relationships should appear
+            assert "DRAINS" in content or "INVOLVES" in content
+
+    def test_graph_format_invalid_shows_error(self, sample_graph: Graph) -> None:
+        """Invalid format shows error."""
+        runner = CliRunner()
+
+        with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+            mock_engine = mock_engine_class.return_value
+            mock_engine.load.return_value = sample_graph
+
+            result = runner.invoke(main, ["graph", "--format", "pdf"])
+
+        assert result.exit_code != 0, "Invalid format should fail"
+        assert "Invalid" in result.output or "invalid" in result.output.lower()
+
+    def test_graph_output_without_format_ignored(self, sample_graph: Graph, tmp_path: Path) -> None:
+        """--output without --format html is ignored (text output to terminal)."""
+        runner = CliRunner()
+
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = sample_graph
+
+                # --output alone without --format html
+                result = runner.invoke(main, ["graph", "--output", "my-graph.html"])
+
+            assert result.exit_code == EXIT_SUCCESS
+            # Should not create file when format is text (default)
+            assert not Path("my-graph.html").exists(), (
+                "--output should be ignored when format is text"
+            )
+
+    def test_graph_format_html_with_node_exploration(
+        self, sample_graph: Graph, tmp_path: Path
+    ) -> None:
+        """HTML export works with node exploration (graph <node> --format html)."""
+        runner = CliRunner()
+
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = sample_graph
+
+                result = runner.invoke(
+                    main, ["graph", "Aunt Susan", "--depth", "2", "--format", "html"]
+                )
+
+            assert result.exit_code == EXIT_SUCCESS, f"Output: {result.output}"
+            assert Path("sentinel-graph.html").exists()
+            content = Path("sentinel-graph.html").read_text()
+            # Should contain the explored node
+            assert "Aunt Susan" in content
+
+
+class TestGraphCommandHtmlErrorHandling:
+    """Tests for HTML export error handling (Code Review fixes)."""
+
+    def test_graph_format_html_permission_error(self, sample_graph: Graph, tmp_path: Path) -> None:
+        """HTML export handles permission errors gracefully."""
+        runner = CliRunner()
+
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = sample_graph
+
+                # Mock Path.write_text to raise PermissionError
+                with patch("pathlib.Path.write_text") as mock_write:
+                    mock_write.side_effect = PermissionError("Permission denied")
+                    result = runner.invoke(main, ["graph", "--format", "html"])
+
+            # Should fail with internal error exit code
+            from sentinel.core.constants import EXIT_INTERNAL_ERROR
+
+            assert result.exit_code == EXIT_INTERNAL_ERROR, f"Output: {result.output}"
+
+    def test_graph_format_html_os_error(self, sample_graph: Graph, tmp_path: Path) -> None:
+        """HTML export handles OS errors gracefully."""
+        runner = CliRunner()
+
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = sample_graph
+
+                # Mock Path.write_text to raise OSError
+                with patch("pathlib.Path.write_text") as mock_write:
+                    mock_write.side_effect = OSError("Disk full")
+                    result = runner.invoke(main, ["graph", "--format", "html"])
+
+            from sentinel.core.constants import EXIT_INTERNAL_ERROR
+
+            assert result.exit_code == EXIT_INTERNAL_ERROR, f"Output: {result.output}"
+
+    def test_graph_format_html_output_nonexistent_parent(
+        self, sample_graph: Graph, tmp_path: Path
+    ) -> None:
+        """--output to non-existent parent directory fails gracefully."""
+        runner = CliRunner()
+
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = sample_graph
+
+                # Try to write to a path where parent doesn't exist
+                result = runner.invoke(
+                    main,
+                    ["graph", "--format", "html", "--output", "nonexistent/subdir/graph.html"],
+                )
+
+            from sentinel.core.constants import EXIT_INTERNAL_ERROR
+
+            assert result.exit_code == EXIT_INTERNAL_ERROR, f"Output: {result.output}"
+            # Should not create any files
+            assert not Path("nonexistent").exists()
