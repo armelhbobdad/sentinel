@@ -1,6 +1,24 @@
+<div align="center">
+
+<img src="assets/logo.png" alt="Sentinel Logo" width="180" />
+
 # Sentinel
 
-**Personal Energy Guardian** - A CLI tool for detecting schedule conflicts that calendars miss.
+**Personal Energy Guardian**
+
+[![CI](https://github.com/armelhbobdad/sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/armelhbobdad/sentinel/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![uv](https://img.shields.io/badge/uv-package%20manager-blueviolet)](https://docs.astral.sh/uv/)
+[![Cognee](https://img.shields.io/badge/powered%20by-Cognee-orange)](https://github.com/topoteretes/cognee)
+
+*A CLI tool for detecting schedule conflicts that calendars miss.*
+
+</div>
+
+> **Challenge Project** — This is a submission for the [Cognee Mini Challenge 2026 - January Edition](https://discord.com/channels/1120795297094832337/1317073613446185074/1461737840538025984). Primarily developed and tested on **Debian GNU/Linux 13 (trixie)** with **Python 3.11**. If you encounter any bugs, please [open an issue](https://github.com/armelhbobdad/sentinel/issues).
+
+---
 
 Sentinel uses knowledge graphs to find hidden energy collisions in your schedule. Unlike traditional calendar apps that only check for time conflicts, Sentinel understands how activities affect your energy levels and detects problems like an emotionally draining Sunday dinner cascading into poor performance at Monday's high-stakes presentation.
 
