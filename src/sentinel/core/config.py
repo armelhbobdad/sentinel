@@ -11,6 +11,7 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Literal
 
+from sentinel.core.constants import ENERGY_THRESHOLD_MAP, ENERGY_THRESHOLD_MEDIUM
 from sentinel.core.exceptions import ConfigError
 
 __all__ = [
@@ -23,6 +24,7 @@ __all__ = [
     "ensure_config_directory",
     "load_config",
     "write_default_config",
+    "get_confidence_threshold",
 ]
 
 # Valid values for Literal fields (used for runtime validation)
@@ -199,6 +201,22 @@ def load_config(config_path: Path | None = None) -> SentinelConfig:
     filtered_data = {k: v for k, v in data.items() if k in valid_fields}
 
     return SentinelConfig(**{**DEFAULT_CONFIG.__dict__, **filtered_data})
+
+
+def get_confidence_threshold(energy_threshold: str) -> float:
+    """Map energy threshold setting to confidence filter value.
+
+    Args:
+        energy_threshold: One of "low", "medium", "high".
+
+    Returns:
+        Confidence threshold value (0.3, 0.5, or 0.7).
+
+    Note:
+        Invalid values should be caught by _validate_config_values() earlier.
+        If somehow an invalid value reaches here, returns MEDIUM as fallback.
+    """
+    return ENERGY_THRESHOLD_MAP.get(energy_threshold, ENERGY_THRESHOLD_MEDIUM)
 
 
 def write_default_config(config_path: Path | None = None) -> None:

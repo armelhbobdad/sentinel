@@ -309,6 +309,17 @@ class TestLoadConfig:
 
         assert result == DEFAULT_CONFIG, f"Expected default config, got {result}"
 
+    def test_empty_config_file_uses_defaults(self, tmp_path: Path) -> None:
+        """Empty config.toml file returns DEFAULT_CONFIG."""
+        from sentinel.core.config import DEFAULT_CONFIG, load_config
+
+        config_file = tmp_path / "empty-config.toml"
+        config_file.write_text("")  # Empty file
+
+        result = load_config(config_file)
+
+        assert result == DEFAULT_CONFIG, f"Expected default config for empty file, got {result}"
+
 
 class TestWriteDefaultConfig:
     """Tests for write_default_config() function."""
@@ -422,3 +433,89 @@ class TestDefaultConfigToml:
         assert data["llm_provider"] == DEFAULT_CONFIG.llm_provider
         assert data["default_format"] == DEFAULT_CONFIG.default_format
         assert data["telemetry_enabled"] == DEFAULT_CONFIG.telemetry_enabled
+
+
+class TestEnergyThresholdConstants:
+    """Tests for energy threshold constants (Story 5.2)."""
+
+    def test_energy_threshold_low_is_0_3(self) -> None:
+        """ENERGY_THRESHOLD_LOW is 0.3."""
+        from sentinel.core.constants import ENERGY_THRESHOLD_LOW
+
+        assert ENERGY_THRESHOLD_LOW == 0.3, f"Expected 0.3, got {ENERGY_THRESHOLD_LOW}"
+
+    def test_energy_threshold_medium_is_0_5(self) -> None:
+        """ENERGY_THRESHOLD_MEDIUM is 0.5."""
+        from sentinel.core.constants import ENERGY_THRESHOLD_MEDIUM
+
+        assert ENERGY_THRESHOLD_MEDIUM == 0.5, f"Expected 0.5, got {ENERGY_THRESHOLD_MEDIUM}"
+
+    def test_energy_threshold_high_is_0_7(self) -> None:
+        """ENERGY_THRESHOLD_HIGH is 0.7."""
+        from sentinel.core.constants import ENERGY_THRESHOLD_HIGH
+
+        assert ENERGY_THRESHOLD_HIGH == 0.7, f"Expected 0.7, got {ENERGY_THRESHOLD_HIGH}"
+
+    def test_energy_threshold_map_contains_all_values(self) -> None:
+        """ENERGY_THRESHOLD_MAP maps all string values to floats."""
+        from sentinel.core.constants import (
+            ENERGY_THRESHOLD_HIGH,
+            ENERGY_THRESHOLD_LOW,
+            ENERGY_THRESHOLD_MAP,
+            ENERGY_THRESHOLD_MEDIUM,
+        )
+
+        assert "low" in ENERGY_THRESHOLD_MAP, "Map should contain 'low'"
+        assert "medium" in ENERGY_THRESHOLD_MAP, "Map should contain 'medium'"
+        assert "high" in ENERGY_THRESHOLD_MAP, "Map should contain 'high'"
+        assert ENERGY_THRESHOLD_MAP["low"] == ENERGY_THRESHOLD_LOW
+        assert ENERGY_THRESHOLD_MAP["medium"] == ENERGY_THRESHOLD_MEDIUM
+        assert ENERGY_THRESHOLD_MAP["high"] == ENERGY_THRESHOLD_HIGH
+
+
+class TestGetConfidenceThreshold:
+    """Tests for get_confidence_threshold() function (Story 5.2)."""
+
+    def test_get_confidence_threshold_low(self) -> None:
+        """Low threshold returns 0.3."""
+        from sentinel.core.config import get_confidence_threshold
+
+        result = get_confidence_threshold("low")
+        assert result == 0.3, f"Expected 0.3, got {result}"
+
+    def test_get_confidence_threshold_medium(self) -> None:
+        """Medium threshold returns 0.5."""
+        from sentinel.core.config import get_confidence_threshold
+
+        result = get_confidence_threshold("medium")
+        assert result == 0.5, f"Expected 0.5, got {result}"
+
+    def test_get_confidence_threshold_high(self) -> None:
+        """High threshold returns 0.7."""
+        from sentinel.core.config import get_confidence_threshold
+
+        result = get_confidence_threshold("high")
+        assert result == 0.7, f"Expected 0.7, got {result}"
+
+    def test_get_confidence_threshold_is_exported(self) -> None:
+        """get_confidence_threshold is in config module's __all__."""
+        from sentinel.core import config
+
+        assert "get_confidence_threshold" in config.__all__, (
+            "get_confidence_threshold should be exported in __all__"
+        )
+
+    def test_get_confidence_threshold_invalid_returns_medium_fallback(self) -> None:
+        """Invalid threshold value falls back to MEDIUM (0.5).
+
+        While validation should catch invalid values earlier, this tests
+        the defensive fallback behavior in get_confidence_threshold().
+        """
+        from sentinel.core.config import get_confidence_threshold
+        from sentinel.core.constants import ENERGY_THRESHOLD_MEDIUM
+
+        # Invalid value should return MEDIUM as fallback
+        result = get_confidence_threshold("invalid_value")
+        assert result == ENERGY_THRESHOLD_MEDIUM, (
+            f"Expected MEDIUM fallback ({ENERGY_THRESHOLD_MEDIUM}), got {result}"
+        )

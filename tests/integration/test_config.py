@@ -8,7 +8,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from click.testing import CliRunner
 
+from sentinel.cli.commands import main
 from sentinel.core.config import (
     DEFAULT_CONFIG,
     get_config_path,
@@ -16,6 +18,8 @@ from sentinel.core.config import (
     load_config,
     write_default_config,
 )
+from sentinel.core.constants import EXIT_CONFIG_ERROR, EXIT_SUCCESS
+from sentinel.core.types import Edge, Graph, Node
 
 
 class TestConfigFilePermissions:
@@ -241,3 +245,236 @@ class TestCustomPathPermissions:
         # Check file permissions
         file_mode = custom_config.stat().st_mode & 0o777
         assert file_mode == 0o600, f"Expected file 0o600, got {oct(file_mode)}"
+
+
+def _create_threshold_test_graph(confidence: float = 0.6) -> Graph:
+    """Create a graph with a collision at specified confidence for threshold testing.
+
+    Pattern: (dinner)-[:DRAINS]->(drained)-[:CONFLICTS_WITH]->
+             (focused)<-[:REQUIRES]-(presentation)
+    """
+    nodes = (
+        Node(
+            id="activity-dinner",
+            label="dinner",
+            type="Activity",
+            source="user-stated",
+            metadata={"domain": "social"},
+        ),
+        Node(
+            id="energystate-drained",
+            label="drained",
+            type="EnergyState",
+            source="ai-inferred",
+            metadata={},
+        ),
+        Node(
+            id="energystate-focused",
+            label="focused",
+            type="EnergyState",
+            source="ai-inferred",
+            metadata={},
+        ),
+        Node(
+            id="activity-presentation",
+            label="presentation",
+            type="Activity",
+            source="user-stated",
+            metadata={"domain": "professional"},
+        ),
+    )
+    edges = (
+        Edge(
+            source_id="activity-dinner",
+            target_id="energystate-drained",
+            relationship="DRAINS",
+            confidence=confidence,
+            metadata={},
+        ),
+        Edge(
+            source_id="energystate-drained",
+            target_id="energystate-focused",
+            relationship="CONFLICTS_WITH",
+            confidence=confidence,
+            metadata={},
+        ),
+        Edge(
+            source_id="activity-presentation",
+            target_id="energystate-focused",
+            relationship="REQUIRES",
+            confidence=confidence,
+            metadata={},
+        ),
+    )
+    return Graph(nodes=nodes, edges=edges)
+
+
+class TestCheckCommandThresholdIntegration:
+    """Integration tests for check command using config threshold (Story 5.2)."""
+
+    def test_check_command_uses_config_threshold_high(self, tmp_path: Path) -> None:
+        """Check command respects 'high' threshold from config (AC #1).
+
+        A collision at confidence 0.6 should be hidden when threshold is 'high' (0.7).
+        """
+        # Create config with "high" threshold
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        config_file.write_text('energy_threshold = "high"\n')
+
+        # Create graph with collision at 0.6 confidence (below high threshold)
+        graph = _create_threshold_test_graph(confidence=0.6)
+
+        runner = CliRunner()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = graph
+
+                result = runner.invoke(main, ["check"])
+
+        # Collision at 0.6 should be hidden with "high" (0.7) threshold
+        # Should show success message or "no collisions" since all filtered out
+        assert result.exit_code == EXIT_SUCCESS, f"Expected success, got {result.exit_code}"
+        assert "collision" not in result.output.lower() or "no" in result.output.lower(), (
+            f"Expected collision to be hidden with high threshold. Output: {result.output}"
+        )
+
+    def test_check_command_uses_config_threshold_low(self, tmp_path: Path) -> None:
+        """Check command respects 'low' threshold from config (AC #3).
+
+        A collision at confidence 0.35 should be shown when threshold is 'low' (0.3).
+        """
+        # Create config with "low" threshold
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        config_file.write_text('energy_threshold = "low"\n')
+
+        # Create graph with collision at 0.35 confidence (above low threshold)
+        graph = _create_threshold_test_graph(confidence=0.35)
+
+        runner = CliRunner()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = graph
+
+                result = runner.invoke(main, ["check"])
+
+        # Collision at 0.35 should be visible with "low" (0.3) threshold
+        # Should have non-zero exit code indicating collision detected
+        assert "collision" in result.output.lower() or "risk" in result.output.lower(), (
+            f"Expected collision visible with low threshold. Output: {result.output}"
+        )
+
+    def test_threshold_change_takes_effect_immediately(self, tmp_path: Path) -> None:
+        """Config threshold change is applied on next run without restart (AC #6)."""
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+
+        # Create graph with collision at 0.6 confidence
+        graph = _create_threshold_test_graph(confidence=0.6)
+
+        runner = CliRunner()
+
+        # First run with "high" threshold - collision should be hidden
+        config_file.write_text('energy_threshold = "high"\n')
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = graph
+
+                result1 = runner.invoke(main, ["check"])
+
+        assert result1.exit_code == EXIT_SUCCESS, "High threshold should hide 0.6 collision"
+
+        # Second run with "medium" threshold - collision should be visible
+        config_file.write_text('energy_threshold = "medium"\n')
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = graph
+
+                result2 = runner.invoke(main, ["check"])
+
+        # With medium threshold (0.5), collision at 0.6 should be visible
+        assert "collision" in result2.output.lower() or "risk" in result2.output.lower(), (
+            f"Medium threshold should show 0.6 collision. Output: {result2.output}"
+        )
+
+    def test_invalid_threshold_raises_config_error_with_exit_code(self, tmp_path: Path) -> None:
+        """Invalid threshold value causes EXIT_CONFIG_ERROR (AC #4)."""
+        # Create config with invalid threshold
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        config_file.write_text('energy_threshold = "super_high"\n')
+
+        runner = CliRunner()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_CONFIG_ERROR, (
+            f"Expected EXIT_CONFIG_ERROR ({EXIT_CONFIG_ERROR}), got {result.exit_code}"
+        )
+        assert "Invalid energy_threshold" in result.output, (
+            f"Expected error message about invalid threshold. Output: {result.output}"
+        )
+        assert "super_high" in result.output, (
+            f"Expected invalid value in error message. Output: {result.output}"
+        )
+
+    def test_boundary_condition_high_threshold_exact_match(self, tmp_path: Path) -> None:
+        """Collision at exactly 0.7 is shown with 'high' threshold (boundary test).
+
+        Tests >= comparison: confidence 0.7 with threshold 0.7 should be shown.
+        """
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        config_file.write_text('energy_threshold = "high"\n')
+
+        # Collision at exactly 0.7 (the high threshold boundary)
+        graph = _create_threshold_test_graph(confidence=0.7)
+
+        runner = CliRunner()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = graph
+
+                result = runner.invoke(main, ["check"])
+
+        # Collision at 0.7 should be visible with "high" (0.7) threshold (>= comparison)
+        assert "collision" in result.output.lower() or "risk" in result.output.lower(), (
+            f"Expected collision at boundary to be visible. Output: {result.output}"
+        )
+
+    def test_boundary_condition_low_threshold_exact_match(self, tmp_path: Path) -> None:
+        """Collision at exactly 0.3 is shown with 'low' threshold (boundary test).
+
+        Tests >= comparison: confidence 0.3 with threshold 0.3 should be shown.
+        """
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        config_file.write_text('energy_threshold = "low"\n')
+
+        # Collision at exactly 0.3 (the low threshold boundary)
+        graph = _create_threshold_test_graph(confidence=0.3)
+
+        runner = CliRunner()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                mock_engine = mock_engine_class.return_value
+                mock_engine.load.return_value = graph
+
+                result = runner.invoke(main, ["check"])
+
+        # Collision at 0.3 should be visible with "low" (0.3) threshold (>= comparison)
+        assert "collision" in result.output.lower() or "risk" in result.output.lower(), (
+            f"Expected collision at boundary to be visible. Output: {result.output}"
+        )

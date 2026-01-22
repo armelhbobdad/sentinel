@@ -15,12 +15,14 @@ from rich.panel import Panel
 from rich.status import Status
 
 from sentinel import __version__
+from sentinel.core.config import ConfigError, get_confidence_threshold, load_config
 from sentinel.core.constants import (
     DEFAULT_CHECK_HTML_FILENAME,
     DEFAULT_EXPLORATION_DEPTH,
     DEFAULT_GRAPH_HTML_FILENAME,
     DEFAULT_PASTE_HTML_FILENAME,
     EXIT_COLLISION_DETECTED,
+    EXIT_CONFIG_ERROR,
     EXIT_INTERNAL_ERROR,
     EXIT_SUCCESS,
     EXIT_USER_ERROR,
@@ -530,6 +532,23 @@ def check(
     if debug:
         logger.debug("Starting collision check")
 
+    # Load configuration (Story 5.2)
+    try:
+        config = load_config()
+    except ConfigError as e:
+        error_console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(EXIT_CONFIG_ERROR)
+
+    # Get confidence threshold from config
+    confidence_threshold = get_confidence_threshold(config.energy_threshold)
+
+    if debug:
+        logger.debug(
+            "Using energy_threshold=%s (confidence >= %.2f)",
+            config.energy_threshold,
+            confidence_threshold,
+        )
+
     # Warn if --output provided without --format html
     if output and output_format != "html":
         console.print(
@@ -599,12 +618,14 @@ def check(
         # Sort collisions by confidence descending (Story 2.4 AC #7)
         all_collisions = sort_collisions_by_confidence(all_collisions)
 
-        # Filter by confidence unless verbose (Story 2.4 AC #5)
+        # Filter by confidence using config threshold (Story 2.4 AC #5, Story 5.2)
         if verbose:
             confidence_filtered = all_collisions
             low_confidence_hidden = 0
         else:
-            confidence_filtered = filter_collisions_by_confidence(all_collisions, MEDIUM_CONFIDENCE)
+            confidence_filtered = filter_collisions_by_confidence(
+                all_collisions, confidence_threshold
+            )
             low_confidence_hidden = len(all_collisions) - len(confidence_filtered)
 
         # If all collisions were filtered out by confidence, show success message
