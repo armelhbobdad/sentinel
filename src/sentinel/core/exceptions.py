@@ -28,3 +28,13 @@ class PersistenceError(SentinelError):
     """
 
     pass
+
+
+class ConfigError(SentinelError):
+    """Error during configuration loading.
+
+    Raised when the config file has invalid TOML syntax
+    or cannot be parsed correctly.
+    """
+
+    pass
