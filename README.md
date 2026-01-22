@@ -8,7 +8,7 @@ Sentinel uses knowledge graphs to find hidden energy collisions in your schedule
 
 - **Schedule Ingestion**: Parse natural language schedule descriptions into a knowledge graph
 - **Collision Detection**: Find multi-hop energy conflicts through graph traversal
-- **Graph Exploration**: Explore relationships around any node
+- **Graph Exploration**: Explore relationships around any node with HTML export
 - **User Corrections**: Delete nodes, modify relationships, or remove edges from AI inferences
 - **Warning Acknowledgment**: Mark unavoidable collisions as acknowledged to suppress repeated warnings
 - **Confidence Scoring**: See which collisions are most reliable
@@ -35,7 +35,120 @@ cp .env.template .env
 # Edit .env with your API keys
 ```
 
-## Usage
+## Quick Start: The Golden Path
+
+This walkthrough demonstrates Sentinel's core flow: **paste → check → graph**.
+
+### Step 1: Create a Test Schedule
+
+Create a file called `schedule.txt` with a schedule containing an energy conflict:
+
+```
+Monday: Strategy presentation with the exec team, need to be sharp
+Sunday: Dinner with Aunt Susan - always emotionally draining
+Tuesday: HIIT workout at 6am
+Wednesday: One-on-one with Steve about project delays
+```
+
+### Step 2: Ingest the Schedule (paste)
+
+```bash
+uv run sentinel paste < schedule.txt
+```
+
+**Expected Output:**
+
+```
+Schedule received. Processing...
+Received 189 characters.
+✓ Extracted 7 entities
+Found 6 relationships.
+✓ Graph saved to /home/user/.local/share/sentinel/graph.db
+
+Knowledge Graph:
+                          [Aunt Susan]
+                               │
+                             DRAINS
+                               ↓
+                           (drained)
+                               │
+                         CONFLICTS_WITH
+                               ↓
+[Strategy Presentation]──REQUIRES──▶(focused)
+
+Legend: [name] = user-stated, (name) = AI-inferred
+```
+
+### Step 3: Detect Collisions (check)
+
+```bash
+uv run sentinel check
+```
+
+**Expected Output:**
+
+```
+⚠️  COLLISION DETECTED                    Confidence: 85%
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│  [SOCIAL] Aunt Susan                                                 │
+│      │                                                               │
+│      ├──DRAINS──▶ drained                                            │
+│      │                                                               │
+│      └──CONFLICTS_WITH──▶ focused                                    │
+│                              │                                       │
+│                              └──REQUIRES── [PROFESSIONAL] Strategy   │
+│                                            Presentation              │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
+
+Knowledge Graph:
+(collision paths highlighted with >>)
+
+  >> [Aunt Susan]
+  >>      │
+  >>    DRAINS
+  >>      ↓
+  >> (drained)
+  >>      │
+  >> CONFLICTS_WITH
+  >>      ↓
+  >> (focused) ◀──REQUIRES── [Strategy Presentation]
+
+Found 1 collision affecting your schedule.
+```
+
+**Exit code:** `1` (collision detected)
+
+### Step 4: Export Graph Visualization (graph)
+
+Generate an interactive HTML visualization:
+
+```bash
+uv run sentinel graph --format html --output my-schedule.html
+```
+
+**Expected Output:**
+
+```
+✓ Graph saved to my-schedule.html
+```
+
+Open `my-schedule.html` in your browser to see an interactive SVG visualization with:
+- Collision paths highlighted in red
+- Node styling distinguishing user-stated vs AI-inferred
+- Relationship labels on edges
+
+### Complete Flow (One-Liner)
+
+```bash
+# Ingest, check, and export in sequence
+uv run sentinel paste < schedule.txt && \
+uv run sentinel check && \
+uv run sentinel graph -f html -o report.html
+```
+
+## Command Reference
 
 ### Basic Commands
 
@@ -47,9 +160,9 @@ uv run sentinel --help
 uv run sentinel --version
 ```
 
-### Analyzing Your Schedule (paste)
+### paste - Analyze Your Schedule
 
-Use the `paste` command to analyze schedule text and build a knowledge graph:
+Ingest schedule text and build a knowledge graph:
 
 ```bash
 # Interactive mode: type/paste text, then press Ctrl+D (EOF) to submit
@@ -61,117 +174,73 @@ cat schedule.txt | uv run sentinel paste
 # Redirect from file
 uv run sentinel paste < schedule.txt
 
-# Pipe inline text
-echo "Saturday: Football with Jean at 8am. Monday: Presentation at 6pm." | uv run sentinel paste
+# Export directly to HTML instead of terminal
+uv run sentinel paste --format html --output my-graph.html
 ```
 
-**Example Output:**
+### check - Detect Collisions
 
-```
-Schedule received. Processing...
-Received 65 characters.
-✓ Extracted 5 entities
-Found 2 relationships.
-✓ Graph saved to /home/user/.local/share/sentinel/graph.db
-
-Knowledge Graph:
-[football]
-     ↓
-[saturday]
-
-[presentation]
-       ↓
-   [monday]
-
-Relationships:
-  [football] --SCHEDULED_AT--> [saturday]
-  [presentation] --SCHEDULED_AT--> [monday]
-
-Legend: [name] = user-stated, (name) = AI-inferred
-```
-
-### Detecting Collisions (check)
-
-Use the `check` command to detect energy collisions in your schedule:
+Analyze the graph for energy conflicts:
 
 ```bash
 # Run collision detection
 uv run sentinel check
 
-# Show low-confidence collisions too
+# Show low-confidence speculative collisions too
 uv run sentinel check --verbose
 
-# Filter by minimum confidence (0.0-1.0)
-uv run sentinel check --min-confidence 0.7
-```
+# Include previously acknowledged collisions
+uv run sentinel check --show-acked
 
-**Example Output:**
-
-```
-Detecting collisions...
-Analyzing 12 relationships...
-
-⚠️  COLLISION DETECTED (confidence: 0.85)
-
-[Dinner with Aunt Susan] → [drained] → [low_focus] → [Monday Presentation]
-
-Your Sunday dinner historically precedes energy dips.
-Monday's presentation requires high cognitive load.
-Risk: Entering high-stakes meeting already depleted.
-
-─────────────────────────────────────────────────
-✗ 1 collision detected
+# Export check results as HTML
+uv run sentinel check --format html --output collision-report.html
 ```
 
 **Exit Codes:**
-- `0` - Success, no collisions detected
-- `1` - Success, collisions detected (warnings present)
+- `0` - No collisions detected
+- `1` - Collisions detected
 - `2` - Error (graph not found, processing failure)
 
-### Managing Acknowledged Warnings
+### graph - Explore the Knowledge Graph
 
-Use `--show-acked` to include previously acknowledged collisions in the output:
+Visualize the full graph or explore around a specific node:
 
 ```bash
-# Show all collisions including acknowledged ones
-uv run sentinel check --show-acked
+# Show full graph in terminal
+uv run sentinel graph
+
+# Explore neighborhood around a node (fuzzy matching)
+uv run sentinel graph "Aunt Susan"
+
+# Control exploration depth (1-5 hops)
+uv run sentinel graph "Aunt Susan" --depth 3
+
+# Export as HTML
+uv run sentinel graph --format html --output visualization.html
+
+# Explore specific node and export
+uv run sentinel graph "presentation" -f html -o presentation-context.html
 ```
 
-Acknowledged collisions display with an `[ACKED]` label.
+### correct - Fix AI Inferences
 
-### Correcting AI Inferences (correct)
-
-Sentinel's AI may sometimes infer incorrect relationships. Use the `correct` command to fix them:
+Correct mistakes in AI-inferred relationships:
 
 ```bash
-# Delete an AI-inferred node (removes node and all connected edges)
+# Delete an AI-inferred node
 uv run sentinel correct delete "drained"
 
 # Skip confirmation prompt
 uv run sentinel correct delete "drained" --yes
 
-# Modify a relationship type between nodes
+# Modify a relationship type
 uv run sentinel correct modify "Aunt Susan" --target "drained" --relationship ENERGIZES
 
-# Remove a specific edge while keeping both nodes
+# Remove a specific edge
 uv run sentinel correct remove-edge "Aunt Susan" --target "drained"
 
-# List all corrections made
+# List all corrections
 uv run sentinel correct list
-```
-
-**Example Output (delete):**
-
-```
-Found node: drained (score: 100)
-
-This will delete the AI-inferred node 'drained' and remove 2 connected edge(s).
-Connected edges:
-  • Aunt Susan --DRAINS--> drained
-  • drained --CONFLICTS_WITH--> focused
-
-Proceed? [y/N]: y
-✓ Deleted node 'drained' and 2 connected edge(s)
 ```
 
 **Notes:**
@@ -179,47 +248,34 @@ Proceed? [y/N]: y
 - Fuzzy matching handles variations: "aunt-susan", "Aunt Susan", "aunt susan"
 - Corrections persist to `~/.local/share/sentinel/corrections.json`
 
-### Acknowledging Collisions (ack)
+### ack - Acknowledge Unavoidable Collisions
 
-Some collisions are unavoidable. Acknowledge them to stop repeated warnings:
+Mark collisions as acknowledged to suppress warnings:
 
 ```bash
-# Acknowledge a collision involving a node
+# Acknowledge a collision
 uv run sentinel ack "sunday-dinner"
 
-# List all acknowledged collisions
+# List all acknowledgments
 uv run sentinel ack --list
 
-# Remove an acknowledgment (warnings will reappear)
+# Remove an acknowledgment
 uv run sentinel ack "sunday-dinner" --remove
 ```
 
-**Example Output:**
-
-```
-✓ Acknowledged collision: sunday-dinner
-  Collision will be hidden in future checks.
-  Use 'sentinel check --show-acked' to see all collisions.
-```
-
-**Notes:**
-- Acknowledgments persist to `~/.local/share/sentinel/acks.json`
-- Fuzzy matching works for node names
-- Use `sentinel check --show-acked` to see hidden collisions
+Acknowledged collisions are hidden by default. Use `sentinel check --show-acked` to display them with an `[ACKED]` label.
 
 ### Debug Mode
 
-For troubleshooting or seeing what Cognee does behind the scenes:
+For troubleshooting or seeing Cognee operations:
 
 ```bash
 # Enable verbose logging
 uv run sentinel --debug paste < schedule.txt
 
 # Short form
-uv run sentinel -d paste < schedule.txt
+uv run sentinel -d check
 ```
-
-Debug mode shows Cognee's internal pipeline progress, entity extraction details, and graph database operations.
 
 ## Development
 
@@ -234,6 +290,9 @@ uv run pytest tests/unit/ -v
 
 # Run integration tests (MockEngine, fixtures)
 uv run pytest tests/integration/ -v
+
+# Run the golden demo path test specifically
+uv run pytest tests/integration/test_golden_demo_path.py -v
 
 # Run live API tests (requires API keys in .env)
 uv run pytest tests/live/ -v -m live
@@ -302,7 +361,8 @@ sentinel/
 │       │   └── commands.py     # Click CLI commands
 │       └── viz/
 │           ├── __init__.py     # Module exports
-│           └── ascii.py        # ASCII graph visualization (phart)
+│           ├── ascii.py        # ASCII graph visualization (phart)
+│           └── html.py         # HTML/SVG graph export
 ├── tests/
 │   ├── conftest.py             # MockEngine and shared fixtures
 │   ├── fixtures/
@@ -324,7 +384,7 @@ Sentinel follows a modular architecture:
   - `rules.py` - BFS-based collision detection logic
   - `consolidation.py` - Semantic node merging using RapidFuzz
 - **CLI Module**: Click-based command-line interface with Rich terminal styling
-- **Viz Module**: ASCII graph visualization using phart library. Imports only types from core.
+- **Viz Module**: ASCII and HTML graph visualization. Imports only types from core.
 - **GraphEngine Protocol**: Async interface for graph operations, enabling both mock and real implementations
 
 ```
