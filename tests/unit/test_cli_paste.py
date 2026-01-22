@@ -463,6 +463,33 @@ class TestPasteFormatOption:
                 f"Expected exit code 2, got {result.exit_code}"
             )
 
+    def test_paste_output_without_format_html_shows_warning(self) -> None:
+        """--output without --format html shows helpful warning."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with patch(
+                "sentinel.core.engine.CogneeEngine.ingest",
+                new_callable=AsyncMock,
+                return_value=_create_mock_graph(),
+            ):
+                result = runner.invoke(
+                    main,
+                    ["paste", "--output", "my-file.html"],
+                    input="Monday: Meeting\n",
+                )
+
+            assert result.exit_code == EXIT_SUCCESS, f"Got: {result.output}"
+            assert "Note:" in result.output, f"Expected warning note in output: {result.output}"
+            assert "--output requires --format html" in result.output, (
+                f"Expected helpful message: {result.output}"
+            )
+            # Verify no HTML file was created (warning only, no auto-inference)
+            from pathlib import Path
+
+            assert not Path("my-file.html").exists(), (
+                "HTML file should not be created without --format html"
+            )
+
 
 class TestFormatOptionConsistency:
     """Tests for --format option consistency across commands (Story 4.4 AC: #3, #4, #6)."""
@@ -521,4 +548,18 @@ class TestFormatOptionConsistency:
             )
             assert "Invalid value" in result.output or "invalid" in result.output.lower(), (
                 f"'{cmd}' should show invalid format error: {result.output}"
+            )
+
+    def test_all_viz_commands_warn_output_without_format_html(self) -> None:
+        """All visualization commands warn when --output used without --format html."""
+        runner = CliRunner()
+
+        for cmd in ["check", "graph", "paste"]:
+            # Provide minimal input for paste to avoid stdin blocking
+            input_text = "test\n" if cmd == "paste" else None
+            result = runner.invoke(main, [cmd, "--output", "test.html"], input=input_text)
+            # Command may fail for other reasons (no graph data), but warning should appear
+            assert "Note:" in result.output, f"'{cmd}' should show warning note: {result.output}"
+            assert "--output requires --format html" in result.output, (
+                f"'{cmd}' should show helpful message: {result.output}"
             )

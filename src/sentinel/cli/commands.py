@@ -372,6 +372,12 @@ def paste(ctx: click.Context, output_format: str, output: str | None) -> None:
     """
     debug = ctx.obj.get("debug", False)
 
+    # Warn if --output provided without --format html
+    if output and output_format != "html":
+        console.print(
+            "[yellow]Note:[/yellow] --output requires --format html. Add -f html to export to file."
+        )
+
     try:
         # Read all input from stdin (works for interactive and piped)
         text = sys.stdin.read()
@@ -523,6 +529,12 @@ def check(
     debug = ctx.obj.get("debug", False)
     if debug:
         logger.debug("Starting collision check")
+
+    # Warn if --output provided without --format html
+    if output and output_format != "html":
+        console.print(
+            "[yellow]Note:[/yellow] --output requires --format html. Add -f html to export to file."
+        )
 
     try:
         engine = CogneeEngine()
@@ -1493,6 +1505,12 @@ def graph_cmd(
         sentinel graph "Aunt Susan" -d 3    # Extended connections (3 hops)
     """
     from sentinel.core.engine import CogneeEngine
+
+    # Warn if --output provided without --format html
+    if output and output_format != "html":
+        console.print(
+            "[yellow]Note:[/yellow] --output requires --format html. Add -f html to export to file."
+        )
 
     try:
         # Validate depth range (Story 4-2 AC#4, AC#5)
