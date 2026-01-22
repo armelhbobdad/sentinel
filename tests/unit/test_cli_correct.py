@@ -226,6 +226,7 @@ class TestCorrectDeleteEdgeCases:
             graph = engine.load()
 
         # Edges referencing "energystate-drained" should be gone
+        assert graph is not None, "Expected graph to be loaded"
         for edge in graph.edges:
             assert edge.source_id != "energystate-drained", f"Source edge should be removed: {edge}"
             assert edge.target_id != "energystate-drained", f"Target edge should be removed: {edge}"
@@ -452,6 +453,7 @@ class TestCorrectRemoveEdgeCommand:
             engine = CogneeEngine()
             graph = engine.load()
 
+        assert graph is not None, "Expected graph to be loaded"
         assert len(graph.nodes) == 3, f"Should preserve all nodes: {graph.nodes}"
         # Should only have 1 edge left (the one to happy)
         assert len(graph.edges) == 1, f"Should have removed one edge: {graph.edges}"

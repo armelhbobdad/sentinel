@@ -1,6 +1,24 @@
+<div align="center">
+
+<img src="assets/logo.png" alt="Sentinel Logo" width="180" />
+
 # Sentinel
 
-**Personal Energy Guardian** - A CLI tool for detecting schedule conflicts that calendars miss.
+**Personal Energy Guardian**
+
+[![CI](https://github.com/armelhbobdad/sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/armelhbobdad/sentinel/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![uv](https://img.shields.io/badge/uv-package%20manager-blueviolet)](https://docs.astral.sh/uv/)
+[![Cognee](https://img.shields.io/badge/powered%20by-Cognee-orange)](https://github.com/topoteretes/cognee)
+
+*A CLI tool for detecting schedule conflicts that calendars miss.*
+
+</div>
+
+> **Challenge Project** — This is a submission for the [Cognee Mini Challenge 2026 - January Edition](https://discord.com/channels/1120795297094832337/1317073613446185074/1461737840538025984). Primarily developed and tested on **Debian GNU/Linux 13 (trixie)** with **Python 3.11**. If you encounter any bugs, please [open an issue](https://github.com/armelhbobdad/sentinel/issues).
+
+---
 
 Sentinel uses knowledge graphs to find hidden energy collisions in your schedule. Unlike traditional calendar apps that only check for time conflicts, Sentinel understands how activities affect your energy levels and detects problems like an emotionally draining Sunday dinner cascading into poor performance at Monday's high-stakes presentation.
 
@@ -266,6 +284,44 @@ uv run sentinel ack "sunday-dinner" --remove
 ```
 
 Acknowledged collisions are hidden by default. Use `sentinel check --show-acked` to display them with an `[ACKED]` label.
+
+### config - Manage Settings
+
+View or modify Sentinel configuration:
+
+```bash
+# Show all current settings
+uv run sentinel config
+
+# View a specific setting
+uv run sentinel config energy_threshold
+
+# Change collision sensitivity (low, medium, high)
+uv run sentinel config energy_threshold high
+
+# Configure for local Ollama (no API keys needed)
+uv run sentinel config llm_provider ollama
+uv run sentinel config llm_model llama3.1:8b
+uv run sentinel config embedding_provider ollama
+
+# Reset all settings to defaults
+uv run sentinel config --reset
+```
+
+**Available Settings:**
+
+| Key | Values | Description |
+|-----|--------|-------------|
+| `energy_threshold` | low, medium, high | Collision detection sensitivity |
+| `llm_provider` | openai, anthropic, ollama | LLM provider for Cognee |
+| `llm_model` | e.g., `openai/gpt-4o-mini` | Model identifier |
+| `llm_endpoint` | URL | Custom endpoint (required for ollama) |
+| `embedding_provider` | openai, ollama | Embedding provider |
+| `embedding_model` | e.g., `openai/text-embedding-3-large` | Embedding model |
+| `default_format` | text, html | Default output format |
+| `telemetry_enabled` | true, false | Cognee telemetry (default: false) |
+
+Configuration is stored at `~/.config/sentinel/config.toml`.
 
 ### Debug Mode
 
