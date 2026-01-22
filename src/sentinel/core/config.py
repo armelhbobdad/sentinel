@@ -6,6 +6,7 @@ the XDG_CONFIG_HOME environment variable when set.
 """
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -29,11 +30,56 @@ __all__ = [
     "validate_api_key",
     "mask_api_key",
     "check_embedding_compatibility",
+    "CONFIG_KEYS",
+    "get_config_display",
+    "get_setting_value",
+    "update_config",
+    "reset_config",
 ]
 
 # Valid values for Literal fields (used for runtime validation)
 VALID_ENERGY_THRESHOLDS: frozenset[str] = frozenset({"low", "medium", "high"})
 VALID_OUTPUT_FORMATS: frozenset[str] = frozenset({"text", "html"})
+VALID_LLM_PROVIDERS: frozenset[str] = frozenset({"openai", "anthropic", "ollama"})
+VALID_EMBEDDING_PROVIDERS: frozenset[str] = frozenset({"openai", "ollama"})
+VALID_BOOL_VALUES: frozenset[str] = frozenset({"true", "false"})
+
+# Valid configuration keys with descriptions and allowed values (Story 5.4)
+# Format: key -> (description, frozenset of valid values or None for free-form)
+CONFIG_KEYS: dict[str, tuple[str, frozenset[str] | None]] = {
+    "energy_threshold": (
+        "Detection sensitivity (low, medium, high)",
+        VALID_ENERGY_THRESHOLDS,
+    ),
+    "llm_provider": (
+        "LLM provider (openai, anthropic, ollama)",
+        VALID_LLM_PROVIDERS,
+    ),
+    "llm_model": (
+        "Model identifier (e.g., openai/gpt-4o-mini)",
+        None,  # Free-form
+    ),
+    "llm_endpoint": (
+        "Custom endpoint URL (required for ollama)",
+        None,  # Free-form
+    ),
+    "embedding_provider": (
+        "Embedding provider (openai, ollama)",
+        VALID_EMBEDDING_PROVIDERS,
+    ),
+    "embedding_model": (
+        "Embedding model (e.g., openai/text-embedding-3-large)",
+        None,  # Free-form
+    ),
+    "default_format": (
+        "Output format (text, html)",
+        VALID_OUTPUT_FORMATS,
+    ),
+    "telemetry_enabled": (
+        "Enable Cognee telemetry (true, false)",
+        VALID_BOOL_VALUES,
+    ),
+}
 
 
 def get_xdg_config_home() -> Path:
@@ -387,3 +433,149 @@ def check_embedding_compatibility(config: SentinelConfig) -> None:
         )
 
     raise ConfigError(error_msg)
+
+
+def get_config_display(config: SentinelConfig) -> str:
+    """Format all configuration for display with section headers.
+
+    Args:
+        config: The SentinelConfig to format.
+
+    Returns:
+        Human-readable string with all settings grouped by category.
+    """
+    lines = []
+
+    # LLM Settings
+    lines.append("# LLM Settings")
+    lines.append(f"llm_provider: {config.llm_provider}")
+    lines.append(f"llm_model: {config.llm_model}")
+    endpoint_display = config.llm_endpoint if config.llm_endpoint else "(not set)"
+    lines.append(f"llm_endpoint: {endpoint_display}")
+    lines.append("")
+
+    # Embedding Settings
+    lines.append("# Embedding Settings")
+    lines.append(f"embedding_provider: {config.embedding_provider}")
+    lines.append(f"embedding_model: {config.embedding_model}")
+    lines.append("")
+
+    # Detection Settings
+    lines.append("# Detection Settings")
+    lines.append(f"energy_threshold: {config.energy_threshold}")
+    lines.append("")
+
+    # Output Settings
+    lines.append("# Output")
+    lines.append(f"default_format: {config.default_format}")
+    lines.append("")
+
+    # Privacy Settings
+    lines.append("# Privacy")
+    telemetry_str = "true" if config.telemetry_enabled else "false"
+    lines.append(f"telemetry_enabled: {telemetry_str}")
+
+    return "\n".join(lines)
+
+
+def get_setting_value(config: SentinelConfig, key: str) -> str:
+    """Get a single setting value for display.
+
+    Args:
+        config: The SentinelConfig to read from.
+        key: Configuration key to retrieve.
+
+    Returns:
+        String representation of the setting value.
+
+    Raises:
+        ConfigError: If key is not a valid configuration key.
+    """
+    if key not in CONFIG_KEYS:
+        valid_keys = ", ".join(sorted(CONFIG_KEYS.keys()))
+        raise ConfigError(f"Unknown configuration key '{key}'. Valid keys: {valid_keys}")
+
+    value = getattr(config, key)
+
+    # Handle special cases
+    if key == "llm_endpoint" and not value:
+        return "(not set)"
+    if key == "telemetry_enabled":
+        return "true" if value else "false"
+
+    return str(value)
+
+
+def update_config(key: str, value: str, config_path: Path | None = None) -> None:
+    """Update a single configuration value.
+
+    Loads existing config, updates the key, validates, and writes back.
+    Uses regex-based update to preserve comments in the TOML file.
+
+    Args:
+        key: Configuration key to update.
+        value: New value (will be converted to appropriate type).
+        config_path: Optional path override. Defaults to XDG config path.
+
+    Raises:
+        ConfigError: If key is invalid or value doesn't pass validation.
+    """
+    if key not in CONFIG_KEYS:
+        valid_keys = ", ".join(sorted(CONFIG_KEYS.keys()))
+        raise ConfigError(f"Unknown configuration key '{key}'. Valid keys: {valid_keys}")
+
+    # Validate value against allowed values if specified
+    description, valid_values = CONFIG_KEYS[key]
+    if valid_values is not None and value.lower() not in valid_values:
+        valid_list = ", ".join(sorted(valid_values))
+        raise ConfigError(f"Invalid value '{value}' for {key}. Valid values: {valid_list}")
+
+    if config_path is None:
+        config_path = get_config_path()
+
+    # Create config file with defaults if it doesn't exist
+    if not config_path.exists():
+        write_default_config(config_path)
+
+    content = config_path.read_text()
+
+    # Convert value to TOML format
+    if key == "telemetry_enabled":
+        toml_value = "true" if value.lower() == "true" else "false"
+    else:
+        # Quote string values
+        toml_value = f'"{value}"'
+
+    # Regex to find and replace the key's value
+    pattern = rf"^({re.escape(key)}\s*=\s*).*$"
+    replacement = rf"\g<1>{toml_value}"
+
+    if re.search(pattern, content, re.MULTILINE):
+        new_content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
+    else:
+        # Key doesn't exist - append it
+        new_content = content.rstrip() + f"\n{key} = {toml_value}\n"
+
+    # Write atomically
+    temp_path = config_path.with_suffix(".tmp")
+    try:
+        temp_path.write_text(new_content)
+        temp_path.chmod(0o600)
+        temp_path.replace(config_path)
+    finally:
+        try:
+            if temp_path.exists():
+                temp_path.unlink()
+        except OSError:
+            pass
+
+
+def reset_config(config_path: Path | None = None) -> None:
+    """Reset configuration to default values.
+
+    Overwrites the config file with DEFAULT_CONFIG_TOML.
+
+    Args:
+        config_path: Optional path override. Defaults to XDG config path.
+    """
+    write_default_config(config_path)

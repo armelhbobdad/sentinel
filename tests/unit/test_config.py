@@ -802,3 +802,346 @@ class TestCheckEmbeddingCompatibility:
         assert "check_embedding_compatibility" in config.__all__, (
             "check_embedding_compatibility should be exported in __all__"
         )
+
+
+class TestConfigKeys:
+    """Tests for CONFIG_KEYS constant (Story 5.4 Task 4)."""
+
+    def test_config_keys_contains_energy_threshold(self) -> None:
+        """CONFIG_KEYS includes energy_threshold with valid values."""
+        from sentinel.core.config import CONFIG_KEYS
+
+        assert "energy_threshold" in CONFIG_KEYS
+        description, valid_values = CONFIG_KEYS["energy_threshold"]
+        assert valid_values is not None
+        assert "low" in valid_values
+        assert "medium" in valid_values
+        assert "high" in valid_values
+
+    def test_config_keys_contains_llm_provider(self) -> None:
+        """CONFIG_KEYS includes llm_provider with valid values."""
+        from sentinel.core.config import CONFIG_KEYS
+
+        assert "llm_provider" in CONFIG_KEYS
+        description, valid_values = CONFIG_KEYS["llm_provider"]
+        assert valid_values is not None
+        assert "openai" in valid_values
+        assert "anthropic" in valid_values
+        assert "ollama" in valid_values
+
+    def test_config_keys_contains_llm_model(self) -> None:
+        """CONFIG_KEYS includes llm_model with free-form value."""
+        from sentinel.core.config import CONFIG_KEYS
+
+        assert "llm_model" in CONFIG_KEYS
+        description, valid_values = CONFIG_KEYS["llm_model"]
+        assert valid_values is None  # Free-form
+
+    def test_config_keys_contains_embedding_provider(self) -> None:
+        """CONFIG_KEYS includes embedding_provider with valid values."""
+        from sentinel.core.config import CONFIG_KEYS
+
+        assert "embedding_provider" in CONFIG_KEYS
+        description, valid_values = CONFIG_KEYS["embedding_provider"]
+        assert valid_values is not None
+        assert "openai" in valid_values
+        assert "ollama" in valid_values
+
+    def test_config_keys_contains_telemetry_enabled(self) -> None:
+        """CONFIG_KEYS includes telemetry_enabled with boolean values."""
+        from sentinel.core.config import CONFIG_KEYS
+
+        assert "telemetry_enabled" in CONFIG_KEYS
+        description, valid_values = CONFIG_KEYS["telemetry_enabled"]
+        assert valid_values is not None
+        assert "true" in valid_values
+        assert "false" in valid_values
+
+    def test_config_keys_has_descriptions(self) -> None:
+        """All CONFIG_KEYS entries have descriptions."""
+        from sentinel.core.config import CONFIG_KEYS
+
+        for key, (description, _) in CONFIG_KEYS.items():
+            assert description, f"Key '{key}' should have a description"
+            assert len(description) > 5, f"Key '{key}' description too short"
+
+
+class TestGetConfigDisplay:
+    """Tests for get_config_display() function (Story 5.4 Task 2)."""
+
+    def test_get_config_display_includes_all_sections(self) -> None:
+        """Display output includes LLM, Embedding, Detection, Output, Privacy sections."""
+        from sentinel.core.config import SentinelConfig, get_config_display
+
+        config = SentinelConfig()
+        display = get_config_display(config)
+
+        assert "LLM" in display, "Should include LLM section"
+        assert "Embedding" in display, "Should include Embedding section"
+        assert "Detection" in display or "energy_threshold" in display
+        assert "telemetry" in display.lower() or "Privacy" in display
+
+    def test_get_config_display_shows_all_values(self) -> None:
+        """Display includes all config values."""
+        from sentinel.core.config import SentinelConfig, get_config_display
+
+        config = SentinelConfig(
+            energy_threshold="high",
+            llm_provider="anthropic",
+            llm_model="claude-3",
+            embedding_provider="ollama",
+            default_format="html",
+            telemetry_enabled=True,
+        )
+        display = get_config_display(config)
+
+        assert "high" in display
+        assert "anthropic" in display
+        assert "claude-3" in display
+        assert "ollama" in display
+        assert "html" in display
+        assert "true" in display.lower()
+
+    def test_get_config_display_shows_not_set_for_empty_endpoint(self) -> None:
+        """Empty llm_endpoint shows as '(not set)'."""
+        from sentinel.core.config import SentinelConfig, get_config_display
+
+        config = SentinelConfig(llm_endpoint="")
+        display = get_config_display(config)
+
+        assert "(not set)" in display or "not set" in display.lower()
+
+    def test_get_config_display_shows_endpoint_when_set(self) -> None:
+        """Non-empty llm_endpoint is displayed."""
+        from sentinel.core.config import SentinelConfig, get_config_display
+
+        config = SentinelConfig(llm_endpoint="http://localhost:11434/v1")
+        display = get_config_display(config)
+
+        assert "http://localhost:11434/v1" in display
+
+
+class TestGetSettingValue:
+    """Tests for get_setting_value() function (Story 5.4 Task 2)."""
+
+    def test_get_setting_value_energy_threshold(self) -> None:
+        """get_setting_value('energy_threshold', config) returns value."""
+        from sentinel.core.config import SentinelConfig, get_setting_value
+
+        config = SentinelConfig(energy_threshold="high")
+        result = get_setting_value(config, "energy_threshold")
+
+        assert result == "high"
+
+    def test_get_setting_value_llm_provider(self) -> None:
+        """get_setting_value('llm_provider', config) returns value."""
+        from sentinel.core.config import SentinelConfig, get_setting_value
+
+        config = SentinelConfig(llm_provider="anthropic")
+        result = get_setting_value(config, "llm_provider")
+
+        assert result == "anthropic"
+
+    def test_get_setting_value_telemetry_enabled_bool(self) -> None:
+        """get_setting_value('telemetry_enabled', config) returns string."""
+        from sentinel.core.config import SentinelConfig, get_setting_value
+
+        config = SentinelConfig(telemetry_enabled=True)
+        result = get_setting_value(config, "telemetry_enabled")
+
+        assert result == "true"
+
+    def test_get_setting_value_empty_endpoint(self) -> None:
+        """get_setting_value('llm_endpoint', config) for empty shows (not set)."""
+        from sentinel.core.config import SentinelConfig, get_setting_value
+
+        config = SentinelConfig(llm_endpoint="")
+        result = get_setting_value(config, "llm_endpoint")
+
+        assert result == "(not set)"
+
+    def test_get_setting_value_invalid_key_raises(self) -> None:
+        """get_setting_value('invalid', config) raises ConfigError."""
+        from sentinel.core.config import SentinelConfig, get_setting_value
+        from sentinel.core.exceptions import ConfigError
+
+        config = SentinelConfig()
+        with pytest.raises(ConfigError) as exc_info:
+            get_setting_value(config, "invalid_key")
+
+        assert "Unknown configuration key" in str(exc_info.value)
+        assert "invalid_key" in str(exc_info.value)
+
+
+class TestUpdateConfig:
+    """Tests for update_config() function (Story 5.4 Task 3)."""
+
+    def test_update_config_changes_value(self, tmp_path: Path) -> None:
+        """update_config('energy_threshold', 'high') changes file."""
+        from sentinel.core.config import load_config, update_config, write_default_config
+
+        config_path = tmp_path / "config.toml"
+        write_default_config(config_path)
+
+        update_config("energy_threshold", "high", config_path)
+
+        config = load_config(config_path)
+        assert config.energy_threshold == "high"
+
+    def test_update_config_preserves_other_values(self, tmp_path: Path) -> None:
+        """Changing one key doesn't affect others."""
+        from sentinel.core.config import load_config, update_config
+
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            'energy_threshold = "low"\nllm_provider = "anthropic"\ntelemetry_enabled = true\n'
+        )
+
+        update_config("energy_threshold", "high", config_path)
+
+        config = load_config(config_path)
+        assert config.energy_threshold == "high"
+        assert config.llm_provider == "anthropic"
+        assert config.telemetry_enabled is True
+
+    def test_update_config_invalid_key_raises(self, tmp_path: Path) -> None:
+        """update_config('invalid', 'value') raises ConfigError."""
+        from sentinel.core.config import update_config, write_default_config
+        from sentinel.core.exceptions import ConfigError
+
+        config_path = tmp_path / "config.toml"
+        write_default_config(config_path)
+
+        with pytest.raises(ConfigError) as exc_info:
+            update_config("invalid_key", "value", config_path)
+
+        assert "Unknown configuration key" in str(exc_info.value)
+
+    def test_update_config_invalid_value_raises(self, tmp_path: Path) -> None:
+        """update_config('energy_threshold', 'extreme') raises ConfigError."""
+        from sentinel.core.config import update_config, write_default_config
+        from sentinel.core.exceptions import ConfigError
+
+        config_path = tmp_path / "config.toml"
+        write_default_config(config_path)
+
+        with pytest.raises(ConfigError) as exc_info:
+            update_config("energy_threshold", "extreme", config_path)
+
+        assert "Invalid value" in str(exc_info.value)
+        assert "extreme" in str(exc_info.value)
+
+    def test_update_config_converts_boolean(self, tmp_path: Path) -> None:
+        """update_config('telemetry_enabled', 'true') writes boolean true."""
+        from sentinel.core.config import load_config, update_config, write_default_config
+
+        config_path = tmp_path / "config.toml"
+        write_default_config(config_path)
+
+        update_config("telemetry_enabled", "true", config_path)
+
+        config = load_config(config_path)
+        assert config.telemetry_enabled is True
+
+    def test_update_config_boolean_false(self, tmp_path: Path) -> None:
+        """update_config('telemetry_enabled', 'false') writes boolean false."""
+        from sentinel.core.config import load_config, update_config
+
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("telemetry_enabled = true\n")
+
+        update_config("telemetry_enabled", "false", config_path)
+
+        config = load_config(config_path)
+        assert config.telemetry_enabled is False
+
+    def test_update_config_creates_file_if_missing(self, tmp_path: Path) -> None:
+        """update_config on missing file creates it with default + update."""
+        from sentinel.core.config import load_config, update_config
+
+        config_path = tmp_path / "new_config.toml"
+        assert not config_path.exists()
+
+        update_config("energy_threshold", "high", config_path)
+
+        assert config_path.exists()
+        config = load_config(config_path)
+        assert config.energy_threshold == "high"
+
+    def test_update_config_free_form_value(self, tmp_path: Path) -> None:
+        """update_config('llm_model', 'custom-model') accepts any value."""
+        from sentinel.core.config import load_config, update_config, write_default_config
+
+        config_path = tmp_path / "config.toml"
+        write_default_config(config_path)
+
+        update_config("llm_model", "my-custom-model:v2", config_path)
+
+        config = load_config(config_path)
+        assert config.llm_model == "my-custom-model:v2"
+
+
+class TestResetConfig:
+    """Tests for reset_config() function (Story 5.4 Task 3)."""
+
+    def test_reset_config_restores_defaults(self, tmp_path: Path) -> None:
+        """reset_config() restores DEFAULT_CONFIG_TOML."""
+        from sentinel.core.config import (
+            DEFAULT_CONFIG,
+            load_config,
+            reset_config,
+        )
+
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('energy_threshold = "high"\nllm_provider = "anthropic"\n')
+
+        reset_config(config_path)
+
+        config = load_config(config_path)
+        assert config.energy_threshold == DEFAULT_CONFIG.energy_threshold
+        assert config.llm_provider == DEFAULT_CONFIG.llm_provider
+
+    def test_reset_config_creates_file_if_missing(self, tmp_path: Path) -> None:
+        """reset_config() creates file if it doesn't exist."""
+        from sentinel.core.config import reset_config
+
+        config_path = tmp_path / "new_config.toml"
+        assert not config_path.exists()
+
+        reset_config(config_path)
+
+        assert config_path.exists()
+
+
+class TestConfigExports:
+    """Tests for Story 5.4 exports."""
+
+    def test_config_keys_is_exported(self) -> None:
+        """CONFIG_KEYS is in config module's __all__."""
+        from sentinel.core import config
+
+        assert "CONFIG_KEYS" in config.__all__
+
+    def test_get_config_display_is_exported(self) -> None:
+        """get_config_display is in config module's __all__."""
+        from sentinel.core import config
+
+        assert "get_config_display" in config.__all__
+
+    def test_get_setting_value_is_exported(self) -> None:
+        """get_setting_value is in config module's __all__."""
+        from sentinel.core import config
+
+        assert "get_setting_value" in config.__all__
+
+    def test_update_config_is_exported(self) -> None:
+        """update_config is in config module's __all__."""
+        from sentinel.core import config
+
+        assert "update_config" in config.__all__
+
+    def test_reset_config_is_exported(self) -> None:
+        """reset_config is in config module's __all__."""
+        from sentinel.core import config
+
+        assert "reset_config" in config.__all__

@@ -622,3 +622,206 @@ class TestApiKeyValidationIntegration:
         assert "Embedding requires OpenAI API key" in result.output, (
             f"Expected embedding error message. Output: {result.output}"
         )
+
+
+class TestConfigCommandIntegration:
+    """Integration tests for config CLI command (Story 5.4)."""
+
+    def test_config_no_args_shows_all_settings(self, tmp_path: Path) -> None:
+        """sentinel config shows all settings formatted (AC1)."""
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        config_file.write_text('energy_threshold = "high"\nllm_provider = "anthropic"\n')
+
+        runner = CliRunner()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}):
+            result = runner.invoke(main, ["config"])
+
+        assert result.exit_code == EXIT_SUCCESS, f"Expected success. Output: {result.output}"
+        assert "high" in result.output, "Should show energy_threshold value"
+        assert "anthropic" in result.output, "Should show llm_provider value"
+        assert "LLM" in result.output, "Should have section headers"
+
+    def test_config_single_arg_shows_value(self, tmp_path: Path) -> None:
+        """sentinel config energy_threshold shows 'high' (AC2)."""
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        config_file.write_text('energy_threshold = "high"\n')
+
+        runner = CliRunner()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}):
+            result = runner.invoke(main, ["config", "energy_threshold"])
+
+        assert result.exit_code == EXIT_SUCCESS, f"Expected success. Output: {result.output}"
+        assert result.output.strip() == "high", f"Expected 'high', got: {result.output}"
+
+    def test_config_two_args_updates_file(self, tmp_path: Path) -> None:
+        """sentinel config energy_threshold high updates config.toml (AC3)."""
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        config_file.write_text('energy_threshold = "medium"\n')
+
+        runner = CliRunner()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}):
+            result = runner.invoke(main, ["config", "energy_threshold", "high"])
+
+        assert result.exit_code == EXIT_SUCCESS, f"Expected success. Output: {result.output}"
+        assert "Set energy_threshold = high" in result.output, (
+            f"Expected confirmation. Output: {result.output}"
+        )
+
+        # Verify file was updated
+        loaded = load_config(config_file)
+        assert loaded.energy_threshold == "high"
+
+    def test_config_reset_restores_defaults(self, tmp_path: Path) -> None:
+        """sentinel config --reset restores DEFAULT_CONFIG_TOML (AC4)."""
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        config_file.write_text('energy_threshold = "high"\nllm_provider = "anthropic"\n')
+
+        runner = CliRunner()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}):
+            result = runner.invoke(main, ["config", "--reset"])
+
+        assert result.exit_code == EXIT_SUCCESS, f"Expected success. Output: {result.output}"
+        assert "reset to defaults" in result.output.lower(), (
+            f"Expected confirmation. Output: {result.output}"
+        )
+
+        # Verify file was reset
+        loaded = load_config(config_file)
+        assert loaded.energy_threshold == DEFAULT_CONFIG.energy_threshold
+        assert loaded.llm_provider == DEFAULT_CONFIG.llm_provider
+
+    def test_config_invalid_key_shows_error_and_valid_keys(self, tmp_path: Path) -> None:
+        """sentinel config invalid_key shows error with valid key list (AC2)."""
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+
+        runner = CliRunner()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}):
+            result = runner.invoke(main, ["config", "invalid_key"])
+
+        from sentinel.core.constants import EXIT_USER_ERROR
+
+        assert result.exit_code == EXIT_USER_ERROR, f"Expected error. Output: {result.output}"
+        assert "Unknown configuration key" in result.output, (
+            f"Expected error message. Output: {result.output}"
+        )
+        assert "invalid_key" in result.output, f"Expected key in error. Output: {result.output}"
+
+    def test_config_invalid_value_shows_error_and_valid_values(self, tmp_path: Path) -> None:
+        """sentinel config energy_threshold bad shows error with valid values (AC3)."""
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        config_file.write_text('energy_threshold = "medium"\n')
+
+        runner = CliRunner()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}):
+            result = runner.invoke(main, ["config", "energy_threshold", "extreme"])
+
+        from sentinel.core.constants import EXIT_USER_ERROR
+
+        assert result.exit_code == EXIT_USER_ERROR, f"Expected error. Output: {result.output}"
+        assert "Invalid value" in result.output, f"Expected error. Output: {result.output}"
+        assert "extreme" in result.output, f"Expected value in error. Output: {result.output}"
+        # Should show valid values
+        assert "low" in result.output or "medium" in result.output or "high" in result.output, (
+            f"Expected valid values listed. Output: {result.output}"
+        )
+
+    def test_config_ollama_multi_command_setup(self, tmp_path: Path) -> None:
+        """Full Ollama setup via multiple config commands works (AC6)."""
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        write_default_config(config_file)
+
+        runner = CliRunner()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}):
+            # Run multiple config commands to set up Ollama
+            result1 = runner.invoke(main, ["config", "llm_provider", "ollama"])
+            result2 = runner.invoke(main, ["config", "llm_model", "llama3.1:8b"])
+            result3 = runner.invoke(main, ["config", "llm_endpoint", "http://localhost:11434/v1"])
+            result4 = runner.invoke(main, ["config", "embedding_provider", "ollama"])
+            result5 = runner.invoke(main, ["config", "embedding_model", "nomic-embed-text:latest"])
+
+        # All commands should succeed
+        assert result1.exit_code == EXIT_SUCCESS, f"llm_provider failed: {result1.output}"
+        assert result2.exit_code == EXIT_SUCCESS, f"llm_model failed: {result2.output}"
+        assert result3.exit_code == EXIT_SUCCESS, f"llm_endpoint failed: {result3.output}"
+        assert result4.exit_code == EXIT_SUCCESS, f"embedding_provider failed: {result4.output}"
+        assert result5.exit_code == EXIT_SUCCESS, f"embedding_model failed: {result5.output}"
+
+        # Verify final config
+        loaded = load_config(config_file)
+        assert loaded.llm_provider == "ollama"
+        assert loaded.llm_model == "llama3.1:8b"
+        assert loaded.llm_endpoint == "http://localhost:11434/v1"
+        assert loaded.embedding_provider == "ollama"
+        assert loaded.embedding_model == "nomic-embed-text:latest"
+
+    def test_config_help_lists_all_keys(self) -> None:
+        """sentinel config --help lists all valid keys with descriptions (AC5)."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["config", "--help"])
+
+        assert result.exit_code == EXIT_SUCCESS, f"Help failed: {result.output}"
+        assert "energy_threshold" in result.output
+        assert "llm_provider" in result.output
+        assert "llm_model" in result.output
+        assert "embedding_provider" in result.output
+        assert "telemetry_enabled" in result.output
+
+    def test_config_creates_file_if_missing(self, tmp_path: Path) -> None:
+        """Config command creates config file if it doesn't exist."""
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        assert not config_file.exists()
+
+        runner = CliRunner()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}):
+            result = runner.invoke(main, ["config", "energy_threshold", "high"])
+
+        assert result.exit_code == EXIT_SUCCESS, f"Expected success. Output: {result.output}"
+        assert config_file.exists(), "Config file should be created"
+
+        loaded = load_config(config_file)
+        assert loaded.energy_threshold == "high"
+
+    def test_config_telemetry_boolean_conversion(self, tmp_path: Path) -> None:
+        """Config command converts telemetry_enabled string to boolean."""
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        config_file.write_text("telemetry_enabled = false\n")
+
+        runner = CliRunner()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}):
+            result = runner.invoke(main, ["config", "telemetry_enabled", "true"])
+
+        assert result.exit_code == EXIT_SUCCESS, f"Expected success. Output: {result.output}"
+
+        loaded = load_config(config_file)
+        assert loaded.telemetry_enabled is True
+
+    def test_config_displays_endpoint_not_set(self, tmp_path: Path) -> None:
+        """Config command shows (not set) for empty llm_endpoint."""
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        write_default_config(config_file)
+
+        runner = CliRunner()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}):
+            result = runner.invoke(main, ["config", "llm_endpoint"])
+
+        assert result.exit_code == EXIT_SUCCESS, f"Expected success. Output: {result.output}"
+        assert "(not set)" in result.output, f"Expected (not set). Output: {result.output}"

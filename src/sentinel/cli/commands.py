@@ -16,10 +16,16 @@ from rich.status import Status
 
 from sentinel import __version__
 from sentinel.core.config import (
+    CONFIG_KEYS,
     ConfigError,
     check_embedding_compatibility,
     get_confidence_threshold,
+    get_config_display,
+    get_config_path,
+    get_setting_value,
     load_config,
+    reset_config,
+    update_config,
     validate_api_key,
 )
 
@@ -1658,6 +1664,87 @@ def graph_cmd(
         raise
     except Exception:
         logger.exception("Unhandled exception in graph command")
+        error_console.print("[red]Unexpected error[/red]")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+
+
+@main.command()
+@click.argument("key", required=False)
+@click.argument("value", required=False)
+@click.option("--reset", is_flag=True, help="Reset configuration to defaults.")
+@click.pass_context
+def config(ctx: click.Context, key: str | None, value: str | None, reset: bool) -> None:
+    """View or modify Sentinel configuration.
+
+    Without arguments, displays all current settings.
+    With KEY, displays that setting's value.
+    With KEY VALUE, updates the setting.
+
+    \b
+    Valid keys:
+      energy_threshold   - Detection sensitivity (low, medium, high)
+      llm_provider       - LLM provider (openai, anthropic, ollama)
+      llm_model          - Model identifier (e.g., openai/gpt-4o-mini)
+      llm_endpoint       - Custom endpoint URL (required for ollama)
+      embedding_provider - Embedding provider (openai, ollama)
+      embedding_model    - Embedding model (e.g., openai/text-embedding-3-large)
+      default_format     - Output format (text, html)
+      telemetry_enabled  - Enable Cognee telemetry (true, false)
+
+    \b
+    Examples:
+        sentinel config                        # Show all settings
+        sentinel config energy_threshold       # Show specific setting
+        sentinel config energy_threshold high  # Change setting
+        sentinel config --reset                # Reset to defaults
+    """
+    try:
+        # Handle --reset flag
+        if reset:
+            reset_config()
+            console.print("[green]✓[/green] Configuration reset to defaults")
+            config_path = get_config_path()
+            console.print(f"[dim]File: {config_path}[/dim]")
+            raise SystemExit(EXIT_SUCCESS)
+
+        # Load current config
+        current_config = load_config()
+
+        # No arguments - display all settings
+        if key is None:
+            display = get_config_display(current_config)
+            console.print(display)
+            raise SystemExit(EXIT_SUCCESS)
+
+        # Single argument - display specific setting
+        if value is None:
+            try:
+                setting_value = get_setting_value(current_config, key)
+                console.print(setting_value)
+                raise SystemExit(EXIT_SUCCESS)
+            except ConfigError as e:
+                error_console.print(f"[red]Error:[/red] {e}")
+                raise SystemExit(EXIT_USER_ERROR)
+
+        # Two arguments - update setting
+        try:
+            update_config(key, value)
+            console.print(f"[green]✓[/green] Set {key} = {escape(value)}")
+            raise SystemExit(EXIT_SUCCESS)
+        except ConfigError as e:
+            error_console.print(f"[red]Error:[/red] {e}")
+            # Show valid values if available
+            if key in CONFIG_KEYS:
+                description, valid_values = CONFIG_KEYS[key]
+                if valid_values:
+                    valid_list = ", ".join(sorted(valid_values))
+                    error_console.print(f"[dim]Valid values: {valid_list}[/dim]")
+            raise SystemExit(EXIT_USER_ERROR)
+
+    except SystemExit:
+        raise
+    except Exception:
+        logger.exception("Unhandled exception in config command")
         error_console.print("[red]Unexpected error[/red]")
         raise SystemExit(EXIT_INTERNAL_ERROR)
 
