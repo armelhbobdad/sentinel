@@ -6,6 +6,7 @@ import logging
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 import click
 from rich.console import Console
@@ -15,11 +16,17 @@ from rich.status import Status
 
 from sentinel import __version__
 from sentinel.core.constants import (
+    DEFAULT_CHECK_HTML_FILENAME,
+    DEFAULT_EXPLORATION_DEPTH,
+    DEFAULT_GRAPH_HTML_FILENAME,
+    DEFAULT_PASTE_HTML_FILENAME,
     EXIT_COLLISION_DETECTED,
     EXIT_INTERNAL_ERROR,
     EXIT_SUCCESS,
     EXIT_USER_ERROR,
     HIGH_CONFIDENCE,
+    LARGE_GRAPH_THRESHOLD,
+    MAX_EXPLORATION_DEPTH,
     MEDIUM_CONFIDENCE,
 )
 from sentinel.core.exceptions import IngestionError, PersistenceError
@@ -38,11 +45,32 @@ from sentinel.core.types import (
     ScoredCollision,
     strip_domain_prefix,
 )
-from sentinel.viz import render_ascii
+from sentinel.viz import render_ascii, render_html
 
 logger = logging.getLogger(__name__)
 console = Console()
 error_console = Console(stderr=True)
+
+
+def _write_html_file(path: Path, content: str) -> bool:
+    """Write HTML content to file with error handling.
+
+    Args:
+        path: Path to write to.
+        content: HTML content to write.
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    try:
+        path.write_text(content, encoding="utf-8")
+        return True
+    except PermissionError:
+        error_console.print(f"[red]Error:[/red] Permission denied writing to {path}")
+        return False
+    except OSError as e:
+        error_console.print(f"[red]Error:[/red] Failed to write to {path}: {e}")
+        return False
 
 
 def filter_collisions_by_confidence(
@@ -314,18 +342,41 @@ def main(ctx: click.Context, debug: bool) -> None:
 
 
 @main.command()
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["text", "html"]),
+    default="text",
+    help="Output format: text (terminal) or html (file).",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=str,
+    default=None,
+    help="Output file path for HTML export (default: sentinel-paste.html).",
+)
 @click.pass_context
-def paste(ctx: click.Context) -> None:
+def paste(ctx: click.Context, output_format: str, output: str | None) -> None:
     """Paste your schedule text for analysis.
 
     Read schedule text from stdin (interactive or piped).
 
     Examples:
-        sentinel paste              # Interactive: type text, then Ctrl+D
-        cat schedule.txt | sentinel paste   # Piped from file
-        sentinel paste < schedule.txt       # Redirected from file
+        sentinel paste                         # Interactive: type text, then Ctrl+D
+        cat schedule.txt | sentinel paste      # Piped from file
+        sentinel paste < schedule.txt          # Redirected from file
+        sentinel paste --format html           # Export as HTML file
+        sentinel paste -f html -o my-graph.html  # Custom output filename
     """
     debug = ctx.obj.get("debug", False)
+
+    # Warn if --output provided without --format html
+    if output and output_format != "html":
+        console.print(
+            "[yellow]Note:[/yellow] --output requires --format html. Add -f html to export to file."
+        )
 
     try:
         # Read all input from stdin (works for interactive and piped)
@@ -364,25 +415,35 @@ def paste(ctx: click.Context) -> None:
         db_path = get_graph_db_path()
         console.print(f"[green]✓[/green] Graph saved to {db_path}")
 
-        # Render ASCII visualization (Story 1.5)
-        console.print()  # Blank line separator
-        node_count = len(graph.nodes)
-        edge_count = len(graph.edges)
-        status_msg = (
-            f"[bold blue]Visualizing {node_count} entities "
-            f"and {edge_count} relationships...[/bold blue]"
-        )
-        with Status(status_msg, console=console):
-            ascii_output = render_ascii(graph)
+        # Handle output format (Story 4.4)
+        if output_format == "html":
+            # Generate HTML visualization
+            html_content = render_html(graph)
+            output_path = Path(output) if output else Path(DEFAULT_PASTE_HTML_FILENAME)
+            if _write_html_file(output_path, html_content):
+                console.print(f"[green]✓[/green] Graph saved to {output_path}")
+            else:
+                raise SystemExit(EXIT_INTERNAL_ERROR)
+        else:
+            # Render ASCII visualization (Story 1.5)
+            console.print()  # Blank line separator
+            node_count = len(graph.nodes)
+            edge_count = len(graph.edges)
+            status_msg = (
+                f"[bold blue]Visualizing {node_count} entities "
+                f"and {edge_count} relationships...[/bold blue]"
+            )
+            with Status(status_msg, console=console):
+                ascii_output = render_ascii(graph)
 
-        console.print("[bold]Knowledge Graph:[/bold]")
-        # Use markup=False to prevent Rich from interpreting [label] as style tags
-        # Our node labels use [label] for user-stated nodes
-        console.print(ascii_output, markup=False)
+            console.print("[bold]Knowledge Graph:[/bold]")
+            # Use markup=False to prevent Rich from interpreting [label] as style tags
+            # Our node labels use [label] for user-stated nodes
+            console.print(ascii_output, markup=False)
 
-        # Add legend explaining node styling
-        console.print()
-        console.print("[dim]Legend: [name] = user-stated, (name) = AI-inferred[/dim]")
+            # Add legend explaining node styling
+            console.print()
+            console.print("[dim]Legend: [name] = user-stated, (name) = AI-inferred[/dim]")
 
         raise SystemExit(EXIT_SUCCESS)
 
@@ -417,8 +478,29 @@ def paste(ctx: click.Context) -> None:
     is_flag=True,
     help="Show acknowledged collisions with [ACKED] label.",
 )
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["text", "html"]),
+    default="text",
+    help="Output format: text (terminal) or html (file).",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=str,
+    default=None,
+    help="Output file path for HTML export (default: sentinel-check.html).",
+)
 @click.pass_context
-def check(ctx: click.Context, verbose: bool, show_acked: bool) -> None:
+def check(
+    ctx: click.Context,
+    verbose: bool,
+    show_acked: bool,
+    output_format: str,
+    output: str | None,
+) -> None:
     """Check your schedule for energy collisions.
 
     Analyzes the knowledge graph for collision patterns where energy-draining
@@ -447,6 +529,12 @@ def check(ctx: click.Context, verbose: bool, show_acked: bool) -> None:
     debug = ctx.obj.get("debug", False)
     if debug:
         logger.debug("Starting collision check")
+
+    # Warn if --output provided without --format html
+    if output and output_format != "html":
+        console.print(
+            "[yellow]Note:[/yellow] --output requires --format html. Add -f html to export to file."
+        )
 
     try:
         engine = CogneeEngine()
@@ -613,12 +701,24 @@ def check(ctx: click.Context, verbose: bool, show_acked: bool) -> None:
                 f"[dim]({low_confidence_hidden} low-confidence hidden, use --verbose to show)[/dim]"
             )
 
-        # Show ASCII graph with collision paths highlighted (AC #4)
+        # Get collision paths for highlighting
         collision_paths = [c.path for c in display_collisions]
-        console.print()
-        console.print("[bold]Knowledge Graph (collision paths highlighted with >>):[/bold]")
-        ascii_output = render_ascii(graph, collision_paths=collision_paths)
-        console.print(ascii_output, markup=False)
+
+        # Handle output format
+        if output_format == "html":
+            # Generate HTML with graph visualization and collision highlighting
+            html_content = render_html(graph, collision_paths=collision_paths)
+            output_path = Path(output) if output else Path(DEFAULT_CHECK_HTML_FILENAME)
+            if _write_html_file(output_path, html_content):
+                console.print(f"[green]✓[/green] Report saved to {output_path}")
+            else:
+                raise SystemExit(EXIT_INTERNAL_ERROR)
+        else:
+            # Show ASCII graph with collision paths highlighted (AC #4)
+            console.print()
+            console.print("[bold]Knowledge Graph (collision paths highlighted with >>):[/bold]")
+            ascii_output = render_ascii(graph, collision_paths=collision_paths)
+            console.print(ascii_output, markup=False)
 
         # Exit code based on unacknowledged collisions
         if unacked_collisions:
@@ -1352,6 +1452,171 @@ def ack(
         raise
     except Exception:
         logger.exception("Unhandled exception in ack command")
+        error_console.print("[red]Unexpected error[/red]")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+
+
+@main.command(name="graph")
+@click.argument("node", required=False)
+@click.option(
+    "--depth",
+    "-d",
+    type=int,
+    default=DEFAULT_EXPLORATION_DEPTH,
+    help=(
+        f"Relationship hops to display "
+        f"(default: {DEFAULT_EXPLORATION_DEPTH}, max: {MAX_EXPLORATION_DEPTH})."
+    ),
+)
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["text", "html"]),
+    default="text",
+    help="Output format: text (terminal) or html (file).",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=str,
+    default=None,
+    help="Output file path for HTML export (default: sentinel-graph.html).",
+)
+@click.pass_context
+def graph_cmd(
+    ctx: click.Context,
+    node: str | None,
+    depth: int,
+    output_format: str,
+    output: str | None,
+) -> None:
+    """Explore the knowledge graph around a specific node.
+
+    If NODE is provided, displays the neighborhood around that node.
+    If NODE is omitted, displays the entire graph.
+
+    NODE can be a partial match - fuzzy matching will find close matches.
+
+    Examples:
+        sentinel graph                      # Show full graph
+        sentinel graph "Aunt Susan"         # Explore around Aunt Susan (depth 2)
+        sentinel graph "aunt" --depth 1     # Fuzzy match, immediate neighbors only
+        sentinel graph "Aunt Susan" -d 3    # Extended connections (3 hops)
+    """
+    from sentinel.core.engine import CogneeEngine
+
+    # Warn if --output provided without --format html
+    if output and output_format != "html":
+        console.print(
+            "[yellow]Note:[/yellow] --output requires --format html. Add -f html to export to file."
+        )
+
+    try:
+        # Validate depth range (Story 4-2 AC#4, AC#5)
+        if depth < 0:
+            error_console.print("[red]Error:[/red] Depth must be non-negative.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        if depth > MAX_EXPLORATION_DEPTH:
+            console.print(
+                f"[yellow]Warning:[/yellow] Maximum depth is {MAX_EXPLORATION_DEPTH}. "
+                f"Using --depth {MAX_EXPLORATION_DEPTH}."
+            )
+            depth = MAX_EXPLORATION_DEPTH
+
+        engine = CogneeEngine()
+        graph = engine.load(apply_corrections=True)
+
+        if graph is None or not graph.nodes:
+            error_console.print("[red]Error:[/red] No graph found. Run `sentinel paste` first.")
+            raise SystemExit(EXIT_USER_ERROR)
+
+        # Full graph display if no node specified
+        if node is None:
+            # Handle output format
+            if output_format == "html":
+                html_content = render_html(graph)
+                output_path = Path(output) if output else Path(DEFAULT_GRAPH_HTML_FILENAME)
+                if _write_html_file(output_path, html_content):
+                    console.print(f"[green]✓[/green] Graph saved to {output_path}")
+                else:
+                    raise SystemExit(EXIT_INTERNAL_ERROR)
+            else:
+                ascii_output = render_ascii(graph)
+                console.print(ascii_output, markup=False)
+            raise SystemExit(EXIT_SUCCESS)
+
+        # Find the focal node with fuzzy matching (allow ALL nodes)
+        match_result = fuzzy_find_node(
+            graph,
+            node,
+            ai_inferred_only=False,  # Allow matching ANY node for graph exploration
+        )
+
+        if match_result.match is None:
+            # No match found - show error with suggestions
+            error_console.print(f"[red]Error:[/red] Node '{escape(node)}' not found in graph.")
+            if match_result.suggestions:
+                console.print()
+                console.print(format_node_suggestions(match_result.suggestions))
+            raise SystemExit(EXIT_USER_ERROR)
+
+        focal_node = match_result.match
+
+        # Show fuzzy match notice if not exact
+        if not match_result.is_exact:
+            console.print(
+                f"[dim]Matched: {escape(focal_node.label)} (score: {match_result.score:.0f}%)[/dim]"
+            )
+            console.print()
+
+        # Extract neighborhood (uses core/graph_ops.py)
+        from sentinel.core.graph_ops import extract_neighborhood
+
+        neighborhood = extract_neighborhood(graph, focal_node, depth=depth)
+
+        # Check for large graph warning (Story 4-2 AC#6)
+        # Note: We warn but don't truncate - users may want full context.
+        # The warning guides them to use lower depth for cleaner output.
+        total_nodes = len(neighborhood.nodes)
+        if total_nodes > LARGE_GRAPH_THRESHOLD:
+            console.print(
+                f"[yellow]Warning:[/yellow] Large graph ({total_nodes} nodes). "
+                "Use lower --depth for cleaner output."
+            )
+
+        # Handle output format
+        if output_format == "html":
+            html_content = render_html(neighborhood)
+            output_path = Path(output) if output else Path(DEFAULT_GRAPH_HTML_FILENAME)
+            if _write_html_file(output_path, html_content):
+                console.print(f"[green]✓[/green] Graph saved to {output_path}")
+            else:
+                raise SystemExit(EXIT_INTERNAL_ERROR)
+        else:
+            # Render with focal node highlighted
+            ascii_output = render_ascii(neighborhood, focal_node_label=focal_node.label)
+            console.print(ascii_output, markup=False)
+
+            # Summary
+            console.print()
+            console.print(
+                f"[dim]Showing {len(neighborhood.nodes)} nodes, "
+                f"{len(neighborhood.edges)} relationships "
+                f"(depth {depth} from {escape(focal_node.label)})[/dim]"
+            )
+
+        raise SystemExit(EXIT_SUCCESS)
+
+    except PersistenceError as e:
+        logger.exception("Failed to load graph")
+        error_console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(EXIT_INTERNAL_ERROR)
+    except SystemExit:
+        raise
+    except Exception:
+        logger.exception("Unhandled exception in graph command")
         error_console.print("[red]Unexpected error[/red]")
         raise SystemExit(EXIT_INTERNAL_ERROR)
 

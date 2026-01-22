@@ -273,3 +273,293 @@ Friday: Demo"""
         assert "Failed to process schedule" in result.stderr, (
             f"Expected error message in stderr: {result.stderr}"
         )
+
+
+class TestPasteFormatOption:
+    """Tests for the paste command --format option (Story 4.4)."""
+
+    def test_paste_default_format_is_text(self) -> None:
+        """Default format is text - no HTML file created (AC: #3)."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with patch(
+                "sentinel.core.engine.CogneeEngine.ingest",
+                new_callable=AsyncMock,
+                return_value=_create_mock_graph(),
+            ):
+                result = runner.invoke(main, ["paste"], input="Monday: Meeting\n")
+
+            assert result.exit_code == EXIT_SUCCESS, f"Got: {result.output}"
+            # Check that no HTML file was created
+            from pathlib import Path
+
+            assert not Path("sentinel-paste.html").exists(), (
+                "HTML file should not be created for default format"
+            )
+
+    def test_paste_format_html_creates_file(self) -> None:
+        """sentinel paste --format html creates HTML file (AC: #2, #4)."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with patch(
+                "sentinel.core.engine.CogneeEngine.ingest",
+                new_callable=AsyncMock,
+                return_value=_create_mock_graph(),
+            ):
+                result = runner.invoke(
+                    main, ["paste", "--format", "html"], input="Monday: Meeting\n"
+                )
+
+            assert result.exit_code == EXIT_SUCCESS, f"Got: {result.output}"
+            from pathlib import Path
+
+            assert Path("sentinel-paste.html").exists(), "HTML file should be created"
+            assert "Graph saved to" in result.output, f"Expected success message: {result.output}"
+
+    def test_paste_format_html_output_option(self) -> None:
+        """--output option specifies custom filename (AC: #4)."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with patch(
+                "sentinel.core.engine.CogneeEngine.ingest",
+                new_callable=AsyncMock,
+                return_value=_create_mock_graph(),
+            ):
+                result = runner.invoke(
+                    main,
+                    ["paste", "--format", "html", "--output", "my-schedule.html"],
+                    input="Monday: Meeting\n",
+                )
+
+            assert result.exit_code == EXIT_SUCCESS, f"Got: {result.output}"
+            from pathlib import Path
+
+            assert Path("my-schedule.html").exists(), "Custom HTML file should be created"
+
+    def test_paste_format_short_form(self) -> None:
+        """-f short form works same as --format (AC: #6)."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with patch(
+                "sentinel.core.engine.CogneeEngine.ingest",
+                new_callable=AsyncMock,
+                return_value=_create_mock_graph(),
+            ):
+                result = runner.invoke(main, ["paste", "-f", "html"], input="Monday: Meeting\n")
+
+            assert result.exit_code == EXIT_SUCCESS, f"Got: {result.output}"
+            from pathlib import Path
+
+            assert Path("sentinel-paste.html").exists(), "HTML file should be created with -f"
+
+    def test_paste_format_invalid_shows_error(self) -> None:
+        """Invalid format shows Click error (AC: #5)."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["paste", "--format", "pdf"], input="Monday: Meeting\n")
+
+        assert result.exit_code == 2, f"Expected exit code 2, got {result.exit_code}"
+        # Click shows: "Invalid value for '--format': 'pdf' is not one of 'text', 'html'."
+        assert "Invalid value" in result.output or "invalid" in result.output.lower(), (
+            f"Expected error about invalid format: {result.output}"
+        )
+
+    def test_paste_html_is_self_contained(self) -> None:
+        """HTML output has no external URLs (AC: code review learning)."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with patch(
+                "sentinel.core.engine.CogneeEngine.ingest",
+                new_callable=AsyncMock,
+                return_value=_create_mock_graph(),
+            ):
+                runner.invoke(main, ["paste", "-f", "html"], input="Monday: Meeting\n")
+
+            from pathlib import Path
+
+            html_content = Path("sentinel-paste.html").read_text()
+            assert "http://" not in html_content, "HTML should not contain http:// URLs"
+            assert "https://" not in html_content, "HTML should not contain https:// URLs"
+
+    def test_paste_output_short_form(self) -> None:
+        """-o short form works same as --output (AC: #6)."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with patch(
+                "sentinel.core.engine.CogneeEngine.ingest",
+                new_callable=AsyncMock,
+                return_value=_create_mock_graph(),
+            ):
+                result = runner.invoke(
+                    main,
+                    ["paste", "-f", "html", "-o", "custom.html"],
+                    input="Monday: Meeting\n",
+                )
+
+            assert result.exit_code == EXIT_SUCCESS, f"Got: {result.output}"
+            from pathlib import Path
+
+            assert Path("custom.html").exists(), "Custom HTML file should be created with -o"
+
+    def test_paste_format_text_shows_ascii(self) -> None:
+        """--format text shows ASCII visualization (AC: #1)."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with patch(
+                "sentinel.core.engine.CogneeEngine.ingest",
+                new_callable=AsyncMock,
+                return_value=_create_mock_graph(),
+            ):
+                result = runner.invoke(
+                    main, ["paste", "--format", "text"], input="Monday: Meeting\n"
+                )
+
+            assert result.exit_code == EXIT_SUCCESS, f"Got: {result.output}"
+            # ASCII visualization shows "Knowledge Graph:" header
+            assert "Knowledge Graph:" in result.output, (
+                f"Expected ASCII visualization: {result.output}"
+            )
+            # And the legend
+            assert "Legend:" in result.output, f"Expected legend: {result.output}"
+
+    def test_paste_empty_input_with_format_html(self) -> None:
+        """Empty input with --format html shows error before HTML generation (edge case)."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            result = runner.invoke(main, ["paste", "--format", "html"], input="")
+
+            assert result.exit_code == EXIT_USER_ERROR, (
+                f"Expected exit code 1, got {result.exit_code}"
+            )
+            assert "No schedule text provided" in result.stderr, (
+                f"Expected error message in stderr: {result.stderr}"
+            )
+            # Verify no HTML file was created
+            from pathlib import Path
+
+            assert not Path("sentinel-paste.html").exists(), (
+                "HTML file should not be created for empty input"
+            )
+
+    def test_paste_html_write_permission_denied(self) -> None:
+        """Permission denied when writing HTML returns internal error (edge case)."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with (
+                patch(
+                    "sentinel.core.engine.CogneeEngine.ingest",
+                    new_callable=AsyncMock,
+                    return_value=_create_mock_graph(),
+                ),
+                patch(
+                    "sentinel.cli.commands._write_html_file",
+                    return_value=False,  # Simulate write failure
+                ),
+            ):
+                result = runner.invoke(
+                    main, ["paste", "--format", "html"], input="Monday: Meeting\n"
+                )
+
+            assert result.exit_code == EXIT_INTERNAL_ERROR, (
+                f"Expected exit code 2, got {result.exit_code}"
+            )
+
+    def test_paste_output_without_format_html_shows_warning(self) -> None:
+        """--output without --format html shows helpful warning."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with patch(
+                "sentinel.core.engine.CogneeEngine.ingest",
+                new_callable=AsyncMock,
+                return_value=_create_mock_graph(),
+            ):
+                result = runner.invoke(
+                    main,
+                    ["paste", "--output", "my-file.html"],
+                    input="Monday: Meeting\n",
+                )
+
+            assert result.exit_code == EXIT_SUCCESS, f"Got: {result.output}"
+            assert "Note:" in result.output, f"Expected warning note in output: {result.output}"
+            assert "--output requires --format html" in result.output, (
+                f"Expected helpful message: {result.output}"
+            )
+            # Verify no HTML file was created (warning only, no auto-inference)
+            from pathlib import Path
+
+            assert not Path("my-file.html").exists(), (
+                "HTML file should not be created without --format html"
+            )
+
+
+class TestFormatOptionConsistency:
+    """Tests for --format option consistency across commands (Story 4.4 AC: #3, #4, #6)."""
+
+    def test_all_viz_commands_have_format_option(self) -> None:
+        """All visualization commands support --format option (AC: #4)."""
+        runner = CliRunner()
+
+        # Test that --format is recognized by each command (shows in help)
+        for cmd in ["check", "graph", "paste"]:
+            result = runner.invoke(main, [cmd, "--help"])
+            assert "--format" in result.output, (
+                f"'{cmd}' command should have --format option: {result.output}"
+            )
+            assert "-f" in result.output, (
+                f"'{cmd}' command should have -f short form: {result.output}"
+            )
+
+    def test_all_viz_commands_have_output_option(self) -> None:
+        """All visualization commands support --output option (AC: #4)."""
+        runner = CliRunner()
+
+        for cmd in ["check", "graph", "paste"]:
+            result = runner.invoke(main, [cmd, "--help"])
+            assert "--output" in result.output, (
+                f"'{cmd}' command should have --output option: {result.output}"
+            )
+            assert "-o" in result.output, (
+                f"'{cmd}' command should have -o short form: {result.output}"
+            )
+
+    def test_all_viz_commands_default_to_text(self) -> None:
+        """All visualization commands default to text format (AC: #3)."""
+        runner = CliRunner()
+
+        for cmd in ["check", "graph", "paste"]:
+            result = runner.invoke(main, [cmd, "--help"])
+            # Check that the help text mentions "text" as default or the choice
+            assert "text" in result.output, (
+                f"'{cmd}' help should mention 'text' format: {result.output}"
+            )
+            assert "html" in result.output, (
+                f"'{cmd}' help should mention 'html' format: {result.output}"
+            )
+
+    def test_all_viz_commands_reject_invalid_format(self) -> None:
+        """All visualization commands reject invalid format values (AC: #5)."""
+        runner = CliRunner()
+
+        for cmd in ["check", "graph", "paste"]:
+            # Provide minimal input to avoid stdin blocking
+            input_text = "test\n" if cmd == "paste" else None
+            result = runner.invoke(main, [cmd, "--format", "pdf"], input=input_text)
+            assert result.exit_code == 2, (
+                f"'{cmd}' should reject invalid format with exit code 2: {result.exit_code}"
+            )
+            assert "Invalid value" in result.output or "invalid" in result.output.lower(), (
+                f"'{cmd}' should show invalid format error: {result.output}"
+            )
+
+    def test_all_viz_commands_warn_output_without_format_html(self) -> None:
+        """All visualization commands warn when --output used without --format html."""
+        runner = CliRunner()
+
+        for cmd in ["check", "graph", "paste"]:
+            # Provide minimal input for paste to avoid stdin blocking
+            input_text = "test\n" if cmd == "paste" else None
+            result = runner.invoke(main, [cmd, "--output", "test.html"], input=input_text)
+            # Command may fail for other reasons (no graph data), but warning should appear
+            assert "Note:" in result.output, f"'{cmd}' should show warning note: {result.output}"
+            assert "--output requires --format html" in result.output, (
+                f"'{cmd}' should show helpful message: {result.output}"
+            )

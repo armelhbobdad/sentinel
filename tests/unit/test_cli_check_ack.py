@@ -811,3 +811,286 @@ def test_check_show_acked_with_verbose_shows_all(
             assert "collision" in result.output.lower() or "Work Meeting" in result.output, (
                 f"Expected low-confidence collision in verbose mode: {result.output}"
             )
+
+
+# --- Tests for check --format html (Story 4-3 AC#8) ---
+
+
+class TestCheckCommandHtmlFormat:
+    """Tests for check command HTML format option (Story 4-3)."""
+
+    def test_check_format_html_creates_file(
+        self,
+        cli_runner: CliRunner,
+        sample_graph: Graph,
+        sample_collisions: list[ScoredCollision],
+        tmp_path: Path,
+    ) -> None:
+        """sentinel check --format html creates HTML file (AC#8)."""
+        acks_path = tmp_path / "acks.json"
+        acks_path.write_text('{"version":"1.0","acknowledgments":[]}')
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            with (
+                patch(
+                    "sentinel.core.persistence.get_xdg_data_home",
+                    return_value=tmp_path,
+                ),
+                patch(
+                    "sentinel.core.persistence.get_acks_path",
+                    return_value=acks_path,
+                ),
+                patch("sentinel.core.engine.CogneeEngine") as mock_engine_cls,
+                patch(
+                    "sentinel.cli.commands.detect_cross_domain_collisions",
+                    return_value=sample_collisions,
+                ),
+            ):
+                mock_engine = MagicMock()
+                mock_engine.load.return_value = sample_graph
+                mock_engine_cls.return_value = mock_engine
+
+                result = cli_runner.invoke(main, ["check", "--format", "html"])
+
+            # Should create sentinel-check.html by default
+            assert Path("sentinel-check.html").exists(), (
+                f"HTML file should be created. Output: {result.output}"
+            )
+
+    def test_check_format_html_default_filename(
+        self,
+        cli_runner: CliRunner,
+        sample_graph: Graph,
+        sample_collisions: list[ScoredCollision],
+        tmp_path: Path,
+    ) -> None:
+        """HTML export defaults to sentinel-check.html (AC#8)."""
+        acks_path = tmp_path / "acks.json"
+        acks_path.write_text('{"version":"1.0","acknowledgments":[]}')
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            with (
+                patch(
+                    "sentinel.core.persistence.get_xdg_data_home",
+                    return_value=tmp_path,
+                ),
+                patch(
+                    "sentinel.core.persistence.get_acks_path",
+                    return_value=acks_path,
+                ),
+                patch("sentinel.core.engine.CogneeEngine") as mock_engine_cls,
+                patch(
+                    "sentinel.cli.commands.detect_cross_domain_collisions",
+                    return_value=sample_collisions,
+                ),
+            ):
+                mock_engine = MagicMock()
+                mock_engine.load.return_value = sample_graph
+                mock_engine_cls.return_value = mock_engine
+
+                cli_runner.invoke(main, ["check", "--format", "html"])
+
+            html_file = Path("sentinel-check.html")
+            assert html_file.exists(), "Should create sentinel-check.html"
+            content = html_file.read_text()
+            assert "<!DOCTYPE html>" in content, "File should be valid HTML"
+
+    def test_check_format_html_includes_collisions(
+        self,
+        cli_runner: CliRunner,
+        sample_graph: Graph,
+        sample_collisions: list[ScoredCollision],
+        tmp_path: Path,
+    ) -> None:
+        """HTML includes collision warnings (AC#8)."""
+        acks_path = tmp_path / "acks.json"
+        acks_path.write_text('{"version":"1.0","acknowledgments":[]}')
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            with (
+                patch(
+                    "sentinel.core.persistence.get_xdg_data_home",
+                    return_value=tmp_path,
+                ),
+                patch(
+                    "sentinel.core.persistence.get_acks_path",
+                    return_value=acks_path,
+                ),
+                patch("sentinel.core.engine.CogneeEngine") as mock_engine_cls,
+                patch(
+                    "sentinel.cli.commands.detect_cross_domain_collisions",
+                    return_value=sample_collisions,
+                ),
+            ):
+                mock_engine = MagicMock()
+                mock_engine.load.return_value = sample_graph
+                mock_engine_cls.return_value = mock_engine
+
+                cli_runner.invoke(main, ["check", "--format", "html"])
+
+            content = Path("sentinel-check.html").read_text()
+            # Should include collision information
+            assert "collision" in content.lower() or "warning" in content.lower(), (
+                "HTML should include collision information"
+            )
+
+    def test_check_format_html_includes_graph_visualization(
+        self,
+        cli_runner: CliRunner,
+        sample_graph: Graph,
+        sample_collisions: list[ScoredCollision],
+        tmp_path: Path,
+    ) -> None:
+        """HTML includes graph visualization (AC#8)."""
+        acks_path = tmp_path / "acks.json"
+        acks_path.write_text('{"version":"1.0","acknowledgments":[]}')
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            with (
+                patch(
+                    "sentinel.core.persistence.get_xdg_data_home",
+                    return_value=tmp_path,
+                ),
+                patch(
+                    "sentinel.core.persistence.get_acks_path",
+                    return_value=acks_path,
+                ),
+                patch("sentinel.core.engine.CogneeEngine") as mock_engine_cls,
+                patch(
+                    "sentinel.cli.commands.detect_cross_domain_collisions",
+                    return_value=sample_collisions,
+                ),
+            ):
+                mock_engine = MagicMock()
+                mock_engine.load.return_value = sample_graph
+                mock_engine_cls.return_value = mock_engine
+
+                cli_runner.invoke(main, ["check", "--format", "html"])
+
+            content = Path("sentinel-check.html").read_text()
+            # Should include SVG graph visualization
+            assert "<svg" in content, "HTML should include SVG graph visualization"
+
+    def test_check_format_html_output_option(
+        self,
+        cli_runner: CliRunner,
+        sample_graph: Graph,
+        sample_collisions: list[ScoredCollision],
+        tmp_path: Path,
+    ) -> None:
+        """--output option specifies custom filename."""
+        acks_path = tmp_path / "acks.json"
+        acks_path.write_text('{"version":"1.0","acknowledgments":[]}')
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            with (
+                patch(
+                    "sentinel.core.persistence.get_xdg_data_home",
+                    return_value=tmp_path,
+                ),
+                patch(
+                    "sentinel.core.persistence.get_acks_path",
+                    return_value=acks_path,
+                ),
+                patch("sentinel.core.engine.CogneeEngine") as mock_engine_cls,
+                patch(
+                    "sentinel.cli.commands.detect_cross_domain_collisions",
+                    return_value=sample_collisions,
+                ),
+            ):
+                mock_engine = MagicMock()
+                mock_engine.load.return_value = sample_graph
+                mock_engine_cls.return_value = mock_engine
+
+                result = cli_runner.invoke(
+                    main, ["check", "--format", "html", "--output", "my-check.html"]
+                )
+
+            assert Path("my-check.html").exists(), (
+                f"Custom filename should be created. Output: {result.output}"
+            )
+            assert not Path("sentinel-check.html").exists(), (
+                "Default filename should not be created"
+            )
+
+    def test_check_format_html_highlights_collision_paths(
+        self,
+        cli_runner: CliRunner,
+        sample_graph: Graph,
+        sample_collisions: list[ScoredCollision],
+        tmp_path: Path,
+    ) -> None:
+        """Collision paths are highlighted in HTML visualization (AC#6)."""
+        acks_path = tmp_path / "acks.json"
+        acks_path.write_text('{"version":"1.0","acknowledgments":[]}')
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            with (
+                patch(
+                    "sentinel.core.persistence.get_xdg_data_home",
+                    return_value=tmp_path,
+                ),
+                patch(
+                    "sentinel.core.persistence.get_acks_path",
+                    return_value=acks_path,
+                ),
+                patch("sentinel.core.engine.CogneeEngine") as mock_engine_cls,
+                patch(
+                    "sentinel.cli.commands.detect_cross_domain_collisions",
+                    return_value=sample_collisions,
+                ),
+            ):
+                mock_engine = MagicMock()
+                mock_engine.load.return_value = sample_graph
+                mock_engine_cls.return_value = mock_engine
+
+                cli_runner.invoke(main, ["check", "--format", "html"])
+
+            content = Path("sentinel-check.html").read_text()
+            # Should use collision highlighting color (red)
+            assert "#F44336" in content or "collision" in content, (
+                "HTML should highlight collision paths"
+            )
+
+    def test_check_format_html_no_collisions_no_file(
+        self,
+        cli_runner: CliRunner,
+        sample_graph: Graph,
+        tmp_path: Path,
+    ) -> None:
+        """When no collisions detected, HTML file is not created."""
+        acks_path = tmp_path / "acks.json"
+        acks_path.write_text('{"version":"1.0","acknowledgments":[]}')
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            with (
+                patch(
+                    "sentinel.core.persistence.get_xdg_data_home",
+                    return_value=tmp_path,
+                ),
+                patch(
+                    "sentinel.core.persistence.get_acks_path",
+                    return_value=acks_path,
+                ),
+                patch("sentinel.core.engine.CogneeEngine") as mock_engine_cls,
+                patch(
+                    "sentinel.cli.commands.detect_cross_domain_collisions",
+                    return_value=[],  # No collisions
+                ),
+            ):
+                mock_engine = MagicMock()
+                mock_engine.load.return_value = sample_graph
+                mock_engine_cls.return_value = mock_engine
+
+                result = cli_runner.invoke(main, ["check", "--format", "html"])
+
+            # Should succeed (no collisions = success)
+            assert result.exit_code == 0, f"Expected success, got: {result.output}"
+            # Should NOT create HTML file when no collisions
+            assert not Path("sentinel-check.html").exists(), (
+                "HTML file should not be created when no collisions detected"
+            )
+            # Should show success message
+            assert "NO COLLISION" in result.output.upper(), (
+                f"Should show no collision message: {result.output}"
+            )
