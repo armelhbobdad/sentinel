@@ -120,32 +120,34 @@ Found 1 collision affecting your schedule.
 
 **Exit code:** `1` (collision detected)
 
-### Step 4: Export Graph Visualization (graph)
+### Step 4: Export Collision Report (check --format html)
 
-Generate an interactive HTML visualization:
+Generate an HTML report with collision paths highlighted:
 
 ```bash
-uv run sentinel graph --format html --output my-schedule.html
+uv run sentinel check --format html --output collision-report.html
 ```
 
 **Expected Output:**
 
 ```
-✓ Graph saved to my-schedule.html
+✓ Report saved to collision-report.html
 ```
 
-Open `my-schedule.html` in your browser to see an interactive SVG visualization with:
+Open `collision-report.html` in your browser to see:
 - Collision paths highlighted in red
+- Warning cards showing each collision with confidence scores
 - Node styling distinguishing user-stated vs AI-inferred
 - Relationship labels on edges
+
+**Note:** Use `sentinel check -f html` for collision highlighting. The `sentinel graph -f html` command exports the graph without collision analysis.
 
 ### Complete Flow (One-Liner)
 
 ```bash
-# Ingest, check, and export in sequence
+# Ingest, check, and export collision report
 uv run sentinel paste < schedule.txt && \
-uv run sentinel check && \
-uv run sentinel graph -f html -o report.html
+uv run sentinel check -f html -o report.html
 ```
 
 ## Command Reference
