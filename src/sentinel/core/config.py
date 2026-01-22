@@ -351,31 +351,20 @@ def configure_cognee(config: SentinelConfig | None = None) -> None:
 def validate_api_key() -> str:
     """Validate that an API key is available.
 
-    Checks for API keys in priority order:
-    1. LLM_API_KEY (generic)
-    2. OPENAI_API_KEY (OpenAI specific)
-    3. ANTHROPIC_API_KEY (Anthropic specific)
+    Cognee uses LLM_API_KEY as the single universal key for all providers.
+    The provider is determined by LLM_PROVIDER, not the key name.
 
     Returns:
-        The found API key.
+        The found API key (stripped of leading/trailing whitespace).
 
     Raises:
-        ConfigError: If no API key is found in any environment variable.
+        ConfigError: If LLM_API_KEY is not set or contains only whitespace.
     """
-    # Check in priority order
-    api_key = os.environ.get("LLM_API_KEY")
+    api_key = os.environ.get("LLM_API_KEY", "").strip()
     if api_key:
         return api_key
 
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if api_key:
-        return api_key
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if api_key:
-        return api_key
-
-    raise ConfigError("No API key found. Set LLM_API_KEY or OPENAI_API_KEY environment variable.")
+    raise ConfigError("No API key found. Set LLM_API_KEY environment variable.")
 
 
 def mask_api_key(key: str) -> str:
@@ -400,37 +389,30 @@ def check_embedding_compatibility(config: SentinelConfig) -> None:
     """Check if embedding configuration is compatible with available API keys.
 
     Cognee defaults to OpenAI for embeddings. This function validates that
-    the appropriate API key is available for the configured embedding provider.
+    LLM_API_KEY is available when using OpenAI embeddings.
 
     Args:
         config: The SentinelConfig to validate.
 
     Raises:
-        ConfigError: If embedding provider requires an API key that isn't available.
-            Provides guidance for Anthropic-only users to use local embeddings.
+        ConfigError: If OpenAI embeddings configured but LLM_API_KEY not set.
     """
-    # Non-OpenAI embedding providers don't require OpenAI key
+    # Non-OpenAI embedding providers don't require the key check
     if config.embedding_provider.lower() != "openai":
         return
 
-    # Check if we have a key that can work for OpenAI embeddings
-    # LLM_API_KEY or OPENAI_API_KEY can work
-    has_openai_key = bool(os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY"))
-
-    if has_openai_key:
+    # Check if we have LLM_API_KEY (stripped of whitespace for consistency)
+    if os.environ.get("LLM_API_KEY", "").strip():
         return
 
-    # No OpenAI key available - provide helpful error
-    error_msg = "Embedding requires OpenAI API key. Set OPENAI_API_KEY environment variable."
-
-    # Check if user has Anthropic key - they may not realize embeddings use OpenAI
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        error_msg += (
-            "\n\nTip: Cognee uses OpenAI for embeddings by default. "
-            "For Anthropic-only setup, use local embeddings:\n"
-            "  sentinel config embedding_provider ollama\n"
-            "  sentinel config embedding_model nomic-embed-text:latest"
-        )
+    # No key available - provide helpful error
+    error_msg = "Embedding requires API key. Set LLM_API_KEY environment variable."
+    error_msg += (
+        "\n\nTip: Cognee uses OpenAI for embeddings by default. "
+        "For local-only setup, use Ollama embeddings:\n"
+        "  sentinel config embedding_provider ollama\n"
+        "  sentinel config embedding_model nomic-embed-text:latest"
+    )
 
     raise ConfigError(error_msg)
 

@@ -636,48 +636,18 @@ class TestConfigureCognee:
 
 
 class TestValidateApiKey:
-    """Tests for validate_api_key() function (Story 5.3 AC6)."""
+    """Tests for validate_api_key() function (Story 5.3 AC6, BUG-004)."""
 
     def test_validate_api_key_finds_llm_api_key(self) -> None:
-        """LLM_API_KEY has highest priority."""
+        """LLM_API_KEY is found when set (Cognee's single universal key)."""
         from sentinel.core.config import validate_api_key
 
-        with patch.dict(
-            os.environ,
-            {
-                "LLM_API_KEY": "sk-llm-key",
-                "OPENAI_API_KEY": "sk-openai-key",
-                "ANTHROPIC_API_KEY": "sk-anthropic-key",
-            },
-        ):
+        with patch.dict(os.environ, {"LLM_API_KEY": "sk-llm-key"}, clear=True):
             result = validate_api_key()
             assert result == "sk-llm-key"
 
-    def test_validate_api_key_finds_openai_key(self) -> None:
-        """OPENAI_API_KEY used when LLM_API_KEY missing."""
-        from sentinel.core.config import validate_api_key
-
-        with patch.dict(
-            os.environ,
-            {
-                "OPENAI_API_KEY": "sk-openai-key",
-                "ANTHROPIC_API_KEY": "sk-anthropic-key",
-            },
-            clear=True,
-        ):
-            result = validate_api_key()
-            assert result == "sk-openai-key"
-
-    def test_validate_api_key_finds_anthropic_key(self) -> None:
-        """ANTHROPIC_API_KEY used when others missing."""
-        from sentinel.core.config import validate_api_key
-
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-anthropic-key"}, clear=True):
-            result = validate_api_key()
-            assert result == "sk-anthropic-key"
-
     def test_validate_api_key_raises_on_missing(self) -> None:
-        """ConfigError raised with helpful message when no key."""
+        """ConfigError raised with helpful message when LLM_API_KEY not set."""
         from sentinel.core.config import validate_api_key
         from sentinel.core.exceptions import ConfigError
 
@@ -687,7 +657,28 @@ class TestValidateApiKey:
 
         assert "No API key found" in str(exc_info.value)
         assert "LLM_API_KEY" in str(exc_info.value)
-        assert "OPENAI_API_KEY" in str(exc_info.value)
+
+    def test_validate_api_key_rejects_empty_string(self) -> None:
+        """Empty LLM_API_KEY string is rejected (falsy check)."""
+        from sentinel.core.config import validate_api_key
+        from sentinel.core.exceptions import ConfigError
+
+        with patch.dict(os.environ, {"LLM_API_KEY": ""}, clear=True):
+            with pytest.raises(ConfigError) as exc_info:
+                validate_api_key()
+
+        assert "No API key found" in str(exc_info.value)
+
+    def test_validate_api_key_rejects_whitespace_only(self) -> None:
+        """Whitespace-only LLM_API_KEY is rejected after stripping."""
+        from sentinel.core.config import validate_api_key
+        from sentinel.core.exceptions import ConfigError
+
+        with patch.dict(os.environ, {"LLM_API_KEY": "   "}, clear=True):
+            with pytest.raises(ConfigError) as exc_info:
+                validate_api_key()
+
+        assert "No API key found" in str(exc_info.value)
 
     def test_validate_api_key_is_exported(self) -> None:
         """validate_api_key is in config module's __all__."""
@@ -739,19 +730,19 @@ class TestMaskApiKey:
 
 
 class TestCheckEmbeddingCompatibility:
-    """Tests for check_embedding_compatibility() function (Story 5.3 AC3)."""
+    """Tests for check_embedding_compatibility() function (Story 5.3 AC3, BUG-004)."""
 
     def test_check_embedding_compatibility_openai_with_key_ok(self) -> None:
-        """OpenAI embedding with OPENAI_API_KEY is compatible."""
+        """OpenAI embedding with LLM_API_KEY is compatible."""
         from sentinel.core.config import SentinelConfig, check_embedding_compatibility
 
         config = SentinelConfig(embedding_provider="openai")
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key"}, clear=True):
+        with patch.dict(os.environ, {"LLM_API_KEY": "sk-test-key"}, clear=True):
             # Should not raise
             check_embedding_compatibility(config)
 
     def test_check_embedding_compatibility_openai_no_key_raises(self) -> None:
-        """OpenAI embedding without OPENAI_API_KEY raises ConfigError."""
+        """OpenAI embedding without LLM_API_KEY raises ConfigError."""
         from sentinel.core.config import SentinelConfig, check_embedding_compatibility
         from sentinel.core.exceptions import ConfigError
 
@@ -760,25 +751,24 @@ class TestCheckEmbeddingCompatibility:
             with pytest.raises(ConfigError) as exc_info:
                 check_embedding_compatibility(config)
 
-        assert "Embedding requires OpenAI API key" in str(exc_info.value)
+        assert "Embedding requires API key" in str(exc_info.value)
 
-    def test_check_embedding_compatibility_anthropic_llm_no_openai_raises(self) -> None:
-        """Anthropic LLM + OpenAI embedding without OPENAI_API_KEY shows guidance."""
+    def test_check_embedding_compatibility_no_key_shows_ollama_guidance(self) -> None:
+        """Missing LLM_API_KEY shows Ollama guidance for local setup."""
         from sentinel.core.config import SentinelConfig, check_embedding_compatibility
         from sentinel.core.exceptions import ConfigError
 
-        config = SentinelConfig(llm_provider="anthropic", embedding_provider="openai")
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-anthropic-key"}, clear=True):
+        config = SentinelConfig(embedding_provider="openai")
+        with patch.dict(os.environ, {}, clear=True):
             with pytest.raises(ConfigError) as exc_info:
                 check_embedding_compatibility(config)
 
         error_msg = str(exc_info.value)
-        assert "Embedding requires OpenAI API key" in error_msg
         # Should provide guidance for local embeddings
-        assert "local embeddings" in error_msg.lower() or "ollama" in error_msg.lower()
+        assert "ollama" in error_msg.lower()
 
     def test_check_embedding_compatibility_ollama_ok(self) -> None:
-        """Ollama embedding provider doesn't require OpenAI key."""
+        """Ollama embedding provider doesn't require LLM_API_KEY."""
         from sentinel.core.config import SentinelConfig, check_embedding_compatibility
 
         config = SentinelConfig(embedding_provider="ollama")
@@ -786,13 +776,14 @@ class TestCheckEmbeddingCompatibility:
             # Should not raise
             check_embedding_compatibility(config)
 
-    def test_check_embedding_compatibility_with_llm_api_key_ok(self) -> None:
-        """LLM_API_KEY satisfies OpenAI embedding requirement."""
+    def test_check_embedding_compatibility_case_insensitive(self) -> None:
+        """Embedding provider check is case-insensitive (OpenAI == openai)."""
         from sentinel.core.config import SentinelConfig, check_embedding_compatibility
 
-        config = SentinelConfig(embedding_provider="openai")
-        with patch.dict(os.environ, {"LLM_API_KEY": "sk-llm-key"}, clear=True):
-            # Should not raise - LLM_API_KEY can work for OpenAI
+        # Test uppercase "OPENAI" is treated same as "openai"
+        config = SentinelConfig(embedding_provider="OPENAI")
+        with patch.dict(os.environ, {"LLM_API_KEY": "sk-test-key"}, clear=True):
+            # Should not raise - OPENAI treated same as openai
             check_embedding_compatibility(config)
 
     def test_check_embedding_compatibility_is_exported(self) -> None:
