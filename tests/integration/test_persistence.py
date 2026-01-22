@@ -216,11 +216,13 @@ class TestPersistenceRoundTrip:
             # First persist
             engine.persist(graph1)
             loaded1 = engine.load()
+            assert loaded1 is not None, "Expected graph to be loaded"
             assert loaded1.nodes[0].id == "node-1"
 
             # Second persist overwrites
             engine.persist(graph2)
             loaded2 = engine.load()
+            assert loaded2 is not None, "Expected graph to be loaded"
             assert len(loaded2.nodes) == 1, "Should only have new graph's nodes"
             assert loaded2.nodes[0].id == "node-2"
 

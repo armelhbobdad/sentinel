@@ -45,6 +45,11 @@ markers = [
     "slow: marks tests as slow",
     "live: requires API key for real Cognee calls",
 ]
+filterwarnings = [
+    "ignore:table_names\\(\\) is deprecated:DeprecationWarning:cognee",
+    "ignore:`json_encoders` is deprecated:DeprecationWarning:pydantic",
+    "ignore:Using extra keyword arguments on `Field` is deprecated:DeprecationWarning:pydantic",
+]
 
 [tool.ruff]
 line-length = 100
