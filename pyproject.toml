@@ -33,6 +33,7 @@ dev = [
     "pytest-asyncio",
     "ruff",
     "lefthook>=2.0.15",
+    "ty",
 ]
 
 [tool.pytest.ini_options]

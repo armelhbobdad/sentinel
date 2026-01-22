@@ -26,6 +26,19 @@ MAX_CHECK_TIME: Final[int] = 15  # Total check command timeout (NFR1)
 HIGH_CONFIDENCE: Final[float] = 0.8
 MEDIUM_CONFIDENCE: Final[float] = 0.5
 
+# Energy threshold confidence mappings (Story 5.2)
+# These map energy_threshold config values to confidence filter thresholds
+# Used by get_confidence_threshold() to convert config string to filter value
+ENERGY_THRESHOLD_LOW: Final[float] = 0.3
+ENERGY_THRESHOLD_MEDIUM: Final[float] = 0.5  # Same as MEDIUM_CONFIDENCE
+ENERGY_THRESHOLD_HIGH: Final[float] = 0.7
+
+ENERGY_THRESHOLD_MAP: Final[dict[str, float]] = {
+    "low": ENERGY_THRESHOLD_LOW,
+    "medium": ENERGY_THRESHOLD_MEDIUM,
+    "high": ENERGY_THRESHOLD_HIGH,
+}
+
 # AI-inferred node confidence penalty factor
 # Each AI-inferred node in a collision path reduces confidence by 10%
 AI_INFERRED_PENALTY: Final[float] = 0.9
