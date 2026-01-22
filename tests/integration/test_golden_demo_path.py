@@ -155,18 +155,18 @@ class TestGoldenDemoPath:
     This test ensures all commands work together in the expected sequence.
     """
 
-    def test_golden_path_paste_check_collision_graph_export(self) -> None:
-        """[P0] Full demo path: paste → check → collision → graph export works.
+    def test_golden_path_paste_check_collision_export(self) -> None:
+        """[P0] Full demo path: paste → check → collision → HTML export with highlighting.
 
         GIVEN: User has a schedule with energy-draining social event before focus-required work
-        WHEN: User runs paste → check → graph --format html
-        THEN: Collision is detected AND HTML export is created with expected content
+        WHEN: User runs paste → check --format html
+        THEN: Collision is detected AND HTML export includes collision highlighting
         """
         runner = CliRunner()
         graph = _create_demo_collision_graph()
 
         with runner.isolated_filesystem():
-            output_file = Path("demo-graph.html")
+            output_file = Path("collision-report.html")
 
             # Patch ingest and load at the module level where they're defined
             with (
@@ -200,41 +200,20 @@ class TestGoldenDemoPath:
                     f"Expected entity count. Output: {result_paste.output}"
                 )
 
-                # Step 2: CHECK - Detect collision
+                # Step 2: CHECK with HTML export - Detect collision AND export
                 result_check = runner.invoke(
                     main,
-                    ["check"],
+                    ["check", "--format", "html", "--output", str(output_file)],
                     catch_exceptions=False,
                 )
 
-                # Verify collision was detected
+                # Verify collision was detected (exit code 1)
                 assert result_check.exit_code == EXIT_COLLISION_DETECTED, (
                     f"Check should detect collision (exit code 1). "
                     f"Got {result_check.exit_code}. Output: {result_check.output}"
                 )
-                assert "collision" in result_check.output.lower(), (
-                    f"Expected 'collision' in output. Output: {result_check.output}"
-                )
-                assert "Aunt Susan" in result_check.output, (
-                    f"Expected 'Aunt Susan' (draining entity). Output: {result_check.output}"
-                )
-                # Verify domain labels are present (Story 2.2)
-                assert "SOCIAL" in result_check.output or "PROFESSIONAL" in result_check.output, (
-                    f"Expected domain labels in collision output. Output: {result_check.output}"
-                )
 
-                # Step 3: GRAPH EXPORT - Generate HTML visualization
-                result_graph = runner.invoke(
-                    main,
-                    ["graph", "--format", "html", "--output", str(output_file)],
-                    catch_exceptions=False,
-                )
-
-                # Verify graph export succeeded
-                assert result_graph.exit_code == EXIT_SUCCESS, (
-                    f"Graph export should succeed. Got {result_graph.exit_code}. "
-                    f"Output: {result_graph.output}"
-                )
+                # Verify HTML file was created
                 assert output_file.exists(), f"HTML file should be created at {output_file}"
 
                 # Verify HTML content is valid and complete
@@ -255,37 +234,46 @@ class TestGoldenDemoPath:
                     "HTML should contain 'Strategy Presentation' entity"
                 )
 
-    def test_golden_path_collision_path_highlighted_in_html(self, tmp_path: Path) -> None:
-        """[P0] Collision paths are visually highlighted in HTML export.
+                # Collision highlighting (only check command provides this)
+                assert "collision" in html_content.lower(), (
+                    "HTML should contain collision styling/indicators"
+                )
+
+    def test_golden_path_collision_path_highlighted_in_html(self) -> None:
+        """[P0] Collision paths are visually highlighted in check HTML export.
 
         GIVEN: Graph with detected collision
-        WHEN: Exported to HTML
+        WHEN: Exported via check --format html
         THEN: Collision path edges have special styling/class for highlighting
         """
         runner = CliRunner()
         graph = _create_demo_collision_graph()
-        output_file = tmp_path / "collision-highlight.html"
 
-        mock_engine = MagicMock()
-        mock_engine.load = MagicMock(return_value=graph)
+        with runner.isolated_filesystem():
+            output_file = Path("collision-highlight.html")
 
-        with patch("sentinel.core.engine.CogneeEngine", return_value=mock_engine):
-            result = runner.invoke(
-                main,
-                ["graph", "--format", "html", "--output", str(output_file)],
-                catch_exceptions=False,
-            )
+            with patch(
+                "sentinel.core.engine.CogneeEngine.load",
+                return_value=graph,
+            ):
+                result = runner.invoke(
+                    main,
+                    ["check", "--format", "html", "--output", str(output_file)],
+                    catch_exceptions=False,
+                )
 
-            assert result.exit_code == EXIT_SUCCESS
-            assert output_file.exists()
+                # Check detects collision (exit code 1) but still creates HTML
+                assert result.exit_code == EXIT_COLLISION_DETECTED
+                assert output_file.exists()
 
-            html_content = output_file.read_text()
+                html_content = output_file.read_text()
 
-            # Collision edges should have highlighting
-            # (either class="collision" or stroke color indicating collision)
-            assert "collision" in html_content.lower() or "DRAINS" in html_content, (
-                f"HTML should indicate collision paths. Content snippet: {html_content[:500]}"
-            )
+                # Collision edges should have highlighting class
+                assert "collision" in html_content.lower(), "HTML should contain collision styling"
+                # Should show the DRAINS relationship in collision path
+                assert "DRAINS" in html_content, (
+                    "HTML should show DRAINS relationship in collision path"
+                )
 
     def test_golden_path_check_shows_summary_before_graph(self, tmp_path: Path) -> None:
         """[P1] Check command shows collision summary that matches graph.
