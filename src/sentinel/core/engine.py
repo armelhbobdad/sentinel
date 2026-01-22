@@ -14,6 +14,7 @@ from typing import Any, Protocol
 import cognee
 from cognee.api.v1.search import SearchType
 
+from sentinel.core.config import configure_cognee
 from sentinel.core.exceptions import IngestionError, PersistenceError
 from sentinel.core.persistence import ensure_data_directory, get_graph_db_path
 from sentinel.core.types import (
@@ -748,6 +749,9 @@ class CogneeEngine:
         """
         # Use Sentinel's custom prompt by default for energy-domain extraction
         prompt_to_use = custom_prompt if custom_prompt is not None else SENTINEL_EXTRACTION_PROMPT
+
+        # Configure Cognee with Sentinel settings (Story 5.3)
+        configure_cognee()
 
         try:
             # Reset any previous state

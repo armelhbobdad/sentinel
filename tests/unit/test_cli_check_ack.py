@@ -717,13 +717,14 @@ def test_check_no_acks_file_shows_all_collisions(
 
 
 # --- Test: Flag combination --show-acked + --verbose ---
+# Note: Story 5.5 moved --verbose to global flag on main group
 
 
 def test_check_show_acked_with_verbose_shows_all(
     cli_runner: CliRunner,
     sample_graph: Graph,
 ) -> None:
-    """Check with both --show-acked and --verbose shows all collisions."""
+    """Check with both --show-acked and global --verbose shows all collisions."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         acks_path = tmp_path / "acks.json"
@@ -799,7 +800,7 @@ def test_check_show_acked_with_verbose_shows_all(
             mock_engine.load.return_value = sample_graph
             mock_engine_cls.return_value = mock_engine
 
-            result = cli_runner.invoke(main, ["check", "--show-acked", "--verbose"])
+            result = cli_runner.invoke(main, ["--verbose", "check", "--show-acked"])
 
             # Both collisions should appear (verbose shows low-confidence)
             # Acknowledged collision should have [ACKED] label

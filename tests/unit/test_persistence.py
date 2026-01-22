@@ -408,6 +408,7 @@ class TestCogneeEngineLoad:
             engine.persist(original)
             loaded = engine.load()
 
+        assert loaded is not None, "Expected graph to be loaded"
         node = loaded.nodes[0]
         assert node.id == "person-aunt-susan", f"Expected id, got {node.id}"
         assert node.label == "Aunt Susan", f"Expected label, got {node.label}"
@@ -448,6 +449,7 @@ class TestCogneeEngineLoad:
             engine.persist(original)
             loaded = engine.load()
 
+        assert loaded is not None, "Expected graph to be loaded"
         assert len(loaded.edges) == 1, "Should have 1 edge"
         edge = loaded.edges[0]
         assert edge.source_id == "person-maya", f"Expected source_id, got {edge.source_id}"
@@ -478,6 +480,7 @@ class TestCogneeEngineLoad:
             engine.persist(original)
             loaded = engine.load()
 
+        assert loaded is not None, "Expected graph to be loaded"
         # Find nodes by id
         maya = next(n for n in loaded.nodes if n.id == "person-maya")
         tired = next(n for n in loaded.nodes if n.id == "energystate-tired")
@@ -518,6 +521,7 @@ class TestCogneeEngineLoad:
             engine.persist(original)
             loaded = engine.load()
 
+        assert loaded is not None, "Expected graph to be loaded"
         edge = loaded.edges[0]
         assert edge.metadata.get("source") == "ai-inferred", (
             f"Edge metadata source should be ai-inferred, got {edge.metadata}"
@@ -546,6 +550,7 @@ class TestCogneeEngineLoad:
             engine.persist(original)
             loaded = engine.load()
 
+        assert loaded is not None, "Expected graph to be loaded"
         node = loaded.nodes[0]
         assert node.metadata.get("cognee_type") == "PERSON", (
             f"cognee_type should be preserved, got {node.metadata}"
