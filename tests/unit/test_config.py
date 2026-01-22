@@ -519,3 +519,286 @@ class TestGetConfidenceThreshold:
         assert result == ENERGY_THRESHOLD_MEDIUM, (
             f"Expected MEDIUM fallback ({ENERGY_THRESHOLD_MEDIUM}), got {result}"
         )
+
+
+class TestConfigureCognee:
+    """Tests for configure_cognee() function (Story 5.3)."""
+
+    def test_configure_cognee_sets_llm_provider(self) -> None:
+        """Verify LLM_PROVIDER env var is set from config."""
+        from sentinel.core.config import SentinelConfig, configure_cognee
+
+        config = SentinelConfig(llm_provider="anthropic")
+        with patch.dict(os.environ, {}, clear=True):
+            configure_cognee(config)
+            assert os.environ.get("LLM_PROVIDER") == "anthropic"
+
+    def test_configure_cognee_sets_llm_model(self) -> None:
+        """Verify LLM_MODEL env var is set from config."""
+        from sentinel.core.config import SentinelConfig, configure_cognee
+
+        config = SentinelConfig(llm_model="openai/gpt-4o")
+        with patch.dict(os.environ, {}, clear=True):
+            configure_cognee(config)
+            assert os.environ.get("LLM_MODEL") == "openai/gpt-4o"
+
+    def test_configure_cognee_sets_embedding_provider(self) -> None:
+        """Verify EMBEDDING_PROVIDER env var is set from config."""
+        from sentinel.core.config import SentinelConfig, configure_cognee
+
+        config = SentinelConfig(embedding_provider="ollama")
+        with patch.dict(os.environ, {}, clear=True):
+            configure_cognee(config)
+            assert os.environ.get("EMBEDDING_PROVIDER") == "ollama"
+
+    def test_configure_cognee_sets_embedding_model(self) -> None:
+        """Verify EMBEDDING_MODEL env var is set from config."""
+        from sentinel.core.config import SentinelConfig, configure_cognee
+
+        config = SentinelConfig(embedding_model="nomic-embed-text:latest")
+        with patch.dict(os.environ, {}, clear=True):
+            configure_cognee(config)
+            assert os.environ.get("EMBEDDING_MODEL") == "nomic-embed-text:latest"
+
+    def test_configure_cognee_sets_llm_endpoint_for_ollama(self) -> None:
+        """Verify LLM_ENDPOINT set for Ollama provider."""
+        from sentinel.core.config import SentinelConfig, configure_cognee
+
+        config = SentinelConfig(
+            llm_provider="ollama",
+            llm_endpoint="http://localhost:11434/v1",
+        )
+        with patch.dict(os.environ, {}, clear=True):
+            configure_cognee(config)
+            assert os.environ.get("LLM_ENDPOINT") == "http://localhost:11434/v1"
+
+    def test_configure_cognee_does_not_set_empty_endpoint(self) -> None:
+        """Verify empty LLM_ENDPOINT is not set."""
+        from sentinel.core.config import SentinelConfig, configure_cognee
+
+        config = SentinelConfig(llm_provider="openai", llm_endpoint="")
+        with patch.dict(os.environ, {}, clear=True):
+            configure_cognee(config)
+            assert "LLM_ENDPOINT" not in os.environ
+
+    def test_configure_cognee_telemetry_disabled_by_default(self) -> None:
+        """Verify TELEMETRY_DISABLED=1 when telemetry_enabled=False (NFR9)."""
+        from sentinel.core.config import SentinelConfig, configure_cognee
+
+        config = SentinelConfig(telemetry_enabled=False)
+        with patch.dict(os.environ, {}, clear=True):
+            configure_cognee(config)
+            assert os.environ.get("TELEMETRY_DISABLED") == "1"
+
+    def test_configure_cognee_telemetry_enabled(self) -> None:
+        """Verify TELEMETRY_DISABLED not set when telemetry_enabled=True."""
+        from sentinel.core.config import SentinelConfig, configure_cognee
+
+        config = SentinelConfig(telemetry_enabled=True)
+        with patch.dict(os.environ, {}, clear=True):
+            configure_cognee(config)
+            assert "TELEMETRY_DISABLED" not in os.environ
+
+    def test_configure_cognee_loads_config_if_none_provided(self, tmp_path: Path) -> None:
+        """Verify configure_cognee() loads config when none provided."""
+        from sentinel.core.config import configure_cognee
+
+        custom_xdg = str(tmp_path)
+        config_dir = tmp_path / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        config_file.write_text('llm_provider = "anthropic"\n')
+
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": custom_xdg}, clear=True):
+            configure_cognee()
+            assert os.environ.get("LLM_PROVIDER") == "anthropic"
+
+    def test_configure_cognee_openai_defaults(self) -> None:
+        """Verify default OpenAI configuration is applied."""
+        from sentinel.core.config import SentinelConfig, configure_cognee
+
+        config = SentinelConfig()  # All defaults
+        with patch.dict(os.environ, {}, clear=True):
+            configure_cognee(config)
+            assert os.environ.get("LLM_PROVIDER") == "openai"
+            assert os.environ.get("LLM_MODEL") == "openai/gpt-4o-mini"
+            assert os.environ.get("EMBEDDING_PROVIDER") == "openai"
+            assert os.environ.get("EMBEDDING_MODEL") == "openai/text-embedding-3-large"
+            assert os.environ.get("TELEMETRY_DISABLED") == "1"
+
+    def test_configure_cognee_is_exported(self) -> None:
+        """configure_cognee is in config module's __all__."""
+        from sentinel.core import config
+
+        assert "configure_cognee" in config.__all__, (
+            "configure_cognee should be exported in __all__"
+        )
+
+
+class TestValidateApiKey:
+    """Tests for validate_api_key() function (Story 5.3 AC6)."""
+
+    def test_validate_api_key_finds_llm_api_key(self) -> None:
+        """LLM_API_KEY has highest priority."""
+        from sentinel.core.config import validate_api_key
+
+        with patch.dict(
+            os.environ,
+            {
+                "LLM_API_KEY": "sk-llm-key",
+                "OPENAI_API_KEY": "sk-openai-key",
+                "ANTHROPIC_API_KEY": "sk-anthropic-key",
+            },
+        ):
+            result = validate_api_key()
+            assert result == "sk-llm-key"
+
+    def test_validate_api_key_finds_openai_key(self) -> None:
+        """OPENAI_API_KEY used when LLM_API_KEY missing."""
+        from sentinel.core.config import validate_api_key
+
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "sk-openai-key",
+                "ANTHROPIC_API_KEY": "sk-anthropic-key",
+            },
+            clear=True,
+        ):
+            result = validate_api_key()
+            assert result == "sk-openai-key"
+
+    def test_validate_api_key_finds_anthropic_key(self) -> None:
+        """ANTHROPIC_API_KEY used when others missing."""
+        from sentinel.core.config import validate_api_key
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-anthropic-key"}, clear=True):
+            result = validate_api_key()
+            assert result == "sk-anthropic-key"
+
+    def test_validate_api_key_raises_on_missing(self) -> None:
+        """ConfigError raised with helpful message when no key."""
+        from sentinel.core.config import validate_api_key
+        from sentinel.core.exceptions import ConfigError
+
+        with patch.dict(os.environ, {}, clear=True):
+            with pytest.raises(ConfigError) as exc_info:
+                validate_api_key()
+
+        assert "No API key found" in str(exc_info.value)
+        assert "LLM_API_KEY" in str(exc_info.value)
+        assert "OPENAI_API_KEY" in str(exc_info.value)
+
+    def test_validate_api_key_is_exported(self) -> None:
+        """validate_api_key is in config module's __all__."""
+        from sentinel.core import config
+
+        assert "validate_api_key" in config.__all__, (
+            "validate_api_key should be exported in __all__"
+        )
+
+
+class TestMaskApiKey:
+    """Tests for mask_api_key() function (Story 5.3 AC6)."""
+
+    def test_mask_api_key_short_key(self) -> None:
+        """Short API keys (< 8 chars) are fully masked."""
+        from sentinel.core.config import mask_api_key
+
+        result = mask_api_key("abc123")
+        assert result == "***"
+
+    def test_mask_api_key_normal_key(self) -> None:
+        """Normal API keys are masked as sk-...xxxx."""
+        from sentinel.core.config import mask_api_key
+
+        result = mask_api_key("sk-proj-abc123456789xyz")
+        assert result.startswith("sk-")
+        assert result.endswith("xyz")
+        assert "..." in result
+
+    def test_mask_api_key_preserves_prefix_and_suffix(self) -> None:
+        """API key mask preserves first 3 chars and last 4 chars."""
+        from sentinel.core.config import mask_api_key
+
+        result = mask_api_key("sk-abc123456789wxyz")
+        assert result == "sk-...wxyz"
+
+    def test_mask_api_key_empty_string(self) -> None:
+        """Empty API key returns empty mask."""
+        from sentinel.core.config import mask_api_key
+
+        result = mask_api_key("")
+        assert result == "***"
+
+    def test_mask_api_key_is_exported(self) -> None:
+        """mask_api_key is in config module's __all__."""
+        from sentinel.core import config
+
+        assert "mask_api_key" in config.__all__, "mask_api_key should be exported in __all__"
+
+
+class TestCheckEmbeddingCompatibility:
+    """Tests for check_embedding_compatibility() function (Story 5.3 AC3)."""
+
+    def test_check_embedding_compatibility_openai_with_key_ok(self) -> None:
+        """OpenAI embedding with OPENAI_API_KEY is compatible."""
+        from sentinel.core.config import SentinelConfig, check_embedding_compatibility
+
+        config = SentinelConfig(embedding_provider="openai")
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key"}, clear=True):
+            # Should not raise
+            check_embedding_compatibility(config)
+
+    def test_check_embedding_compatibility_openai_no_key_raises(self) -> None:
+        """OpenAI embedding without OPENAI_API_KEY raises ConfigError."""
+        from sentinel.core.config import SentinelConfig, check_embedding_compatibility
+        from sentinel.core.exceptions import ConfigError
+
+        config = SentinelConfig(embedding_provider="openai")
+        with patch.dict(os.environ, {}, clear=True):
+            with pytest.raises(ConfigError) as exc_info:
+                check_embedding_compatibility(config)
+
+        assert "Embedding requires OpenAI API key" in str(exc_info.value)
+
+    def test_check_embedding_compatibility_anthropic_llm_no_openai_raises(self) -> None:
+        """Anthropic LLM + OpenAI embedding without OPENAI_API_KEY shows guidance."""
+        from sentinel.core.config import SentinelConfig, check_embedding_compatibility
+        from sentinel.core.exceptions import ConfigError
+
+        config = SentinelConfig(llm_provider="anthropic", embedding_provider="openai")
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-anthropic-key"}, clear=True):
+            with pytest.raises(ConfigError) as exc_info:
+                check_embedding_compatibility(config)
+
+        error_msg = str(exc_info.value)
+        assert "Embedding requires OpenAI API key" in error_msg
+        # Should provide guidance for local embeddings
+        assert "local embeddings" in error_msg.lower() or "ollama" in error_msg.lower()
+
+    def test_check_embedding_compatibility_ollama_ok(self) -> None:
+        """Ollama embedding provider doesn't require OpenAI key."""
+        from sentinel.core.config import SentinelConfig, check_embedding_compatibility
+
+        config = SentinelConfig(embedding_provider="ollama")
+        with patch.dict(os.environ, {}, clear=True):
+            # Should not raise
+            check_embedding_compatibility(config)
+
+    def test_check_embedding_compatibility_with_llm_api_key_ok(self) -> None:
+        """LLM_API_KEY satisfies OpenAI embedding requirement."""
+        from sentinel.core.config import SentinelConfig, check_embedding_compatibility
+
+        config = SentinelConfig(embedding_provider="openai")
+        with patch.dict(os.environ, {"LLM_API_KEY": "sk-llm-key"}, clear=True):
+            # Should not raise - LLM_API_KEY can work for OpenAI
+            check_embedding_compatibility(config)
+
+    def test_check_embedding_compatibility_is_exported(self) -> None:
+        """check_embedding_compatibility is in config module's __all__."""
+        from sentinel.core import config
+
+        assert "check_embedding_compatibility" in config.__all__, (
+            "check_embedding_compatibility should be exported in __all__"
+        )

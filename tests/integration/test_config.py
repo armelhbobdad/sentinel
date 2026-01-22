@@ -478,3 +478,147 @@ class TestCheckCommandThresholdIntegration:
         assert "collision" in result.output.lower() or "risk" in result.output.lower(), (
             f"Expected collision at boundary to be visible. Output: {result.output}"
         )
+
+
+class TestApiKeyValidationIntegration:
+    """Integration tests for API key validation in CLI commands (Story 5.3)."""
+
+    def test_paste_command_validates_api_key(self, tmp_path: Path) -> None:
+        """Paste command exits with code 3 when no API key available."""
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+
+        runner = CliRunner()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}, clear=True):
+            result = runner.invoke(main, ["paste"], input="Test schedule\n")
+
+        assert result.exit_code == EXIT_CONFIG_ERROR, (
+            f"Expected EXIT_CONFIG_ERROR ({EXIT_CONFIG_ERROR}), got {result.exit_code}"
+        )
+        assert "No API key found" in result.output or "API key" in result.output, (
+            f"Expected API key error message. Output: {result.output}"
+        )
+
+    def test_anthropic_provider_without_openai_key_shows_guidance(self, tmp_path: Path) -> None:
+        """Helpful error when Anthropic LLM but OpenAI embeddings without key."""
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        config_file.write_text('llm_provider = "anthropic"\nembedding_provider = "openai"\n')
+
+        runner = CliRunner()
+        with patch.dict(
+            os.environ,
+            {"XDG_CONFIG_HOME": str(tmp_path / ".config"), "ANTHROPIC_API_KEY": "sk-anthropic"},
+            clear=True,
+        ):
+            result = runner.invoke(main, ["paste"], input="Test schedule\n")
+
+        assert result.exit_code == EXIT_CONFIG_ERROR, (
+            f"Expected EXIT_CONFIG_ERROR ({EXIT_CONFIG_ERROR}), got {result.exit_code}"
+        )
+        assert "Embedding requires OpenAI API key" in result.output, (
+            f"Expected embedding error message. Output: {result.output}"
+        )
+        # Should provide guidance for local embeddings
+        assert "local embeddings" in result.output.lower() or "ollama" in result.output.lower(), (
+            f"Expected guidance for local embeddings. Output: {result.output}"
+        )
+
+    def test_paste_command_succeeds_with_valid_api_key(self, tmp_path: Path) -> None:
+        """Paste command proceeds (to mocked ingest) with valid API key."""
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+
+        runner = CliRunner()
+        with patch.dict(
+            os.environ,
+            {"XDG_CONFIG_HOME": str(tmp_path / ".config"), "OPENAI_API_KEY": "sk-test-key"},
+            clear=True,
+        ):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                from unittest.mock import AsyncMock
+
+                mock_engine = mock_engine_class.return_value
+                # Mock ingest to return a Graph (use AsyncMock for coroutine)
+                mock_graph = Graph(nodes=(), edges=())
+                mock_engine.ingest = AsyncMock(return_value=mock_graph)
+                mock_engine.persist.return_value = None
+
+                result = runner.invoke(main, ["paste"], input="Test schedule\n")
+
+        # Should not fail with API key error
+        assert result.exit_code != EXIT_CONFIG_ERROR or "API key" not in result.output, (
+            f"Should not fail with API key error. Output: {result.output}"
+        )
+
+    def test_ollama_embedding_bypasses_openai_key_check(self, tmp_path: Path) -> None:
+        """Ollama embedding provider doesn't require OpenAI API key."""
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        config_file.write_text(
+            'llm_provider = "ollama"\n'
+            'llm_endpoint = "http://localhost:11434/v1"\n'
+            'embedding_provider = "ollama"\n'
+            'embedding_model = "nomic-embed-text:latest"\n'
+        )
+
+        runner = CliRunner()
+        with patch.dict(
+            os.environ,
+            {"XDG_CONFIG_HOME": str(tmp_path / ".config"), "LLM_API_KEY": "ollama-key"},
+            clear=True,
+        ):
+            with patch("sentinel.core.engine.CogneeEngine") as mock_engine_class:
+                from unittest.mock import AsyncMock
+
+                mock_engine = mock_engine_class.return_value
+                mock_graph = Graph(nodes=(), edges=())
+                mock_engine.ingest = AsyncMock(return_value=mock_graph)
+                mock_engine.persist.return_value = None
+
+                result = runner.invoke(main, ["paste"], input="Test schedule\n")
+
+        # Should not fail with OpenAI API key error
+        assert "OpenAI API key" not in result.output, (
+            f"Should not require OpenAI key with Ollama. Output: {result.output}"
+        )
+
+    def test_check_command_validates_api_key(self, tmp_path: Path) -> None:
+        """Check command exits with code 3 when no API key available (AC6)."""
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+
+        runner = CliRunner()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path / ".config")}, clear=True):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_CONFIG_ERROR, (
+            f"Expected EXIT_CONFIG_ERROR ({EXIT_CONFIG_ERROR}), got {result.exit_code}"
+        )
+        assert "No API key found" in result.output or "API key" in result.output, (
+            f"Expected API key error message. Output: {result.output}"
+        )
+
+    def test_check_command_validates_embedding_compatibility(self, tmp_path: Path) -> None:
+        """Check command validates embedding provider compatibility (AC6)."""
+        config_dir = tmp_path / ".config" / "sentinel"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        config_file.write_text('llm_provider = "anthropic"\nembedding_provider = "openai"\n')
+
+        runner = CliRunner()
+        with patch.dict(
+            os.environ,
+            {"XDG_CONFIG_HOME": str(tmp_path / ".config"), "ANTHROPIC_API_KEY": "sk-anthropic"},
+            clear=True,
+        ):
+            result = runner.invoke(main, ["check"])
+
+        assert result.exit_code == EXIT_CONFIG_ERROR, (
+            f"Expected EXIT_CONFIG_ERROR ({EXIT_CONFIG_ERROR}), got {result.exit_code}"
+        )
+        assert "Embedding requires OpenAI API key" in result.output, (
+            f"Expected embedding error message. Output: {result.output}"
+        )

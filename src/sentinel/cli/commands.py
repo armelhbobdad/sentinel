@@ -15,7 +15,16 @@ from rich.panel import Panel
 from rich.status import Status
 
 from sentinel import __version__
-from sentinel.core.config import ConfigError, get_confidence_threshold, load_config
+from sentinel.core.config import (
+    ConfigError,
+    check_embedding_compatibility,
+    get_confidence_threshold,
+    load_config,
+    validate_api_key,
+)
+
+# Note: validate_api_key and check_embedding_compatibility are used in both
+# paste and check commands for API key validation (Story 5.3 AC6)
 from sentinel.core.constants import (
     DEFAULT_CHECK_HTML_FILENAME,
     DEFAULT_EXPLORATION_DEPTH,
@@ -396,6 +405,15 @@ def paste(ctx: click.Context, output_format: str, output: str | None) -> None:
         console.print("[green]Schedule received. Processing...[/green]")
         console.print(f"[dim]Received {len(text)} characters.[/dim]")
 
+        # Validate configuration before LLM operations (Story 5.3)
+        try:
+            config = load_config()
+            validate_api_key()
+            check_embedding_compatibility(config)
+        except ConfigError as e:
+            error_console.print(f"[red]Error:[/red] {e}")
+            raise SystemExit(EXIT_CONFIG_ERROR)
+
         # Build knowledge graph with progress indicator (AC #4)
         # Suppress Cognee's verbose logs unless --debug is passed
         # Import CogneeEngine lazily inside suppression context to catch import-time logs
@@ -532,9 +550,11 @@ def check(
     if debug:
         logger.debug("Starting collision check")
 
-    # Load configuration (Story 5.2)
+    # Load configuration and validate API key (Story 5.2, 5.3 AC6)
     try:
         config = load_config()
+        validate_api_key()
+        check_embedding_compatibility(config)
     except ConfigError as e:
         error_console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(EXIT_CONFIG_ERROR)

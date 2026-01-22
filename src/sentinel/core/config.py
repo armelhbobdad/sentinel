@@ -25,6 +25,10 @@ __all__ = [
     "load_config",
     "write_default_config",
     "get_confidence_threshold",
+    "configure_cognee",
+    "validate_api_key",
+    "mask_api_key",
+    "check_embedding_compatibility",
 ]
 
 # Valid values for Literal fields (used for runtime validation)
@@ -259,3 +263,127 @@ def write_default_config(config_path: Path | None = None) -> None:
                 temp_path.unlink()
         except OSError:
             pass
+
+
+def configure_cognee(config: SentinelConfig | None = None) -> None:
+    """Configure Cognee with Sentinel settings.
+
+    Sets environment variables that Cognee reads for LLM and embedding
+    configuration. Must be called before any Cognee operations.
+
+    Args:
+        config: Optional SentinelConfig. Loads from file if not provided.
+
+    Environment Variables Set:
+        - LLM_PROVIDER: The LLM provider (openai, anthropic, ollama)
+        - LLM_MODEL: The LLM model to use
+        - LLM_ENDPOINT: Custom endpoint (only if non-empty, for ollama)
+        - EMBEDDING_PROVIDER: The embedding provider
+        - EMBEDDING_MODEL: The embedding model to use
+        - TELEMETRY_DISABLED: Set to "1" if telemetry is disabled (NFR9)
+    """
+    if config is None:
+        config = load_config()
+
+    # LLM settings
+    os.environ["LLM_PROVIDER"] = config.llm_provider
+    os.environ["LLM_MODEL"] = config.llm_model
+
+    # Only set endpoint if non-empty (typically for Ollama)
+    if config.llm_endpoint:
+        os.environ["LLM_ENDPOINT"] = config.llm_endpoint
+
+    # Embedding settings
+    os.environ["EMBEDDING_PROVIDER"] = config.embedding_provider
+    os.environ["EMBEDDING_MODEL"] = config.embedding_model
+
+    # Privacy (NFR9: telemetry opt-in only)
+    if not config.telemetry_enabled:
+        os.environ["TELEMETRY_DISABLED"] = "1"
+
+
+def validate_api_key() -> str:
+    """Validate that an API key is available.
+
+    Checks for API keys in priority order:
+    1. LLM_API_KEY (generic)
+    2. OPENAI_API_KEY (OpenAI specific)
+    3. ANTHROPIC_API_KEY (Anthropic specific)
+
+    Returns:
+        The found API key.
+
+    Raises:
+        ConfigError: If no API key is found in any environment variable.
+    """
+    # Check in priority order
+    api_key = os.environ.get("LLM_API_KEY")
+    if api_key:
+        return api_key
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if api_key:
+        return api_key
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if api_key:
+        return api_key
+
+    raise ConfigError("No API key found. Set LLM_API_KEY or OPENAI_API_KEY environment variable.")
+
+
+def mask_api_key(key: str) -> str:
+    """Mask an API key for safe logging.
+
+    Preserves the first 3 characters and last 4 characters,
+    replacing the middle with "...".
+
+    Args:
+        key: The API key to mask.
+
+    Returns:
+        Masked key (e.g., "sk-...wxyz") or "***" for short/empty keys.
+    """
+    if len(key) < 8:
+        return "***"
+
+    return f"{key[:3]}...{key[-4:]}"
+
+
+def check_embedding_compatibility(config: SentinelConfig) -> None:
+    """Check if embedding configuration is compatible with available API keys.
+
+    Cognee defaults to OpenAI for embeddings. This function validates that
+    the appropriate API key is available for the configured embedding provider.
+
+    Args:
+        config: The SentinelConfig to validate.
+
+    Raises:
+        ConfigError: If embedding provider requires an API key that isn't available.
+            Provides guidance for Anthropic-only users to use local embeddings.
+    """
+    # Non-OpenAI embedding providers don't require OpenAI key
+    if config.embedding_provider.lower() != "openai":
+        return
+
+    # Check if we have a key that can work for OpenAI embeddings
+    # LLM_API_KEY or OPENAI_API_KEY can work
+    has_openai_key = bool(os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY"))
+
+    if has_openai_key:
+        return
+
+    # No OpenAI key available - provide helpful error
+    error_msg = "Embedding requires OpenAI API key. Set OPENAI_API_KEY environment variable."
+
+    # Check if user has Anthropic key - they may not realize embeddings use OpenAI
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        error_msg += (
+            "\n\nTip: Cognee uses OpenAI for embeddings by default. "
+            "For Anthropic-only setup, use local embeddings:\n"
+            "  sentinel config embedding_provider ollama\n"
+            "  sentinel config embedding_model nomic-embed-text:latest"
+        )
+
+    raise ConfigError(error_msg)
