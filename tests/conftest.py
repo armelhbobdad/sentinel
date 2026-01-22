@@ -4,6 +4,8 @@ This module contains the MockEngine implementation and fixtures
 for testing Sentinel without requiring LLM calls.
 """
 
+import os
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -13,6 +15,37 @@ from sentinel.core.types import Correction, Edge, Graph, Node, ScoredCollision
 
 # Fixture directory path
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "schedules"
+
+
+@pytest.fixture(autouse=True)
+def mock_api_key_for_non_live_tests(request: pytest.FixtureRequest) -> Generator[None, None, None]:
+    """Set fake API key for all non-live tests.
+
+    This fixture runs automatically before each test. It sets a fake
+    OPENAI_API_KEY so that validate_api_key() doesn't fail in tests
+    that mock the CogneeEngine but still call CLI commands.
+
+    Live tests (marked with @pytest.mark.live) are skipped so they
+    can use real API credentials.
+    """
+    # Skip this fixture for tests marked as 'live' - they need real API keys
+    if "live" in [marker.name for marker in request.node.iter_markers()]:
+        return
+
+    # Set fake API key if not already set
+    # Uses LLM_API_KEY per project convention (.env.template)
+    # validate_api_key() checks: LLM_API_KEY -> OPENAI_API_KEY -> ANTHROPIC_API_KEY
+    original_key = os.environ.get("LLM_API_KEY")
+    if original_key is None:
+        os.environ["LLM_API_KEY"] = "sk-test-fake-key-for-mocked-tests-00000000000000"
+
+    yield
+
+    # Restore original state
+    if original_key is None:
+        os.environ.pop("LLM_API_KEY", None)
+    else:
+        os.environ["LLM_API_KEY"] = original_key
 
 
 class MockEngine:
