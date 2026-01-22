@@ -267,6 +267,44 @@ uv run sentinel ack "sunday-dinner" --remove
 
 Acknowledged collisions are hidden by default. Use `sentinel check --show-acked` to display them with an `[ACKED]` label.
 
+### config - Manage Settings
+
+View or modify Sentinel configuration:
+
+```bash
+# Show all current settings
+uv run sentinel config
+
+# View a specific setting
+uv run sentinel config energy_threshold
+
+# Change collision sensitivity (low, medium, high)
+uv run sentinel config energy_threshold high
+
+# Configure for local Ollama (no API keys needed)
+uv run sentinel config llm_provider ollama
+uv run sentinel config llm_model llama3.1:8b
+uv run sentinel config embedding_provider ollama
+
+# Reset all settings to defaults
+uv run sentinel config --reset
+```
+
+**Available Settings:**
+
+| Key | Values | Description |
+|-----|--------|-------------|
+| `energy_threshold` | low, medium, high | Collision detection sensitivity |
+| `llm_provider` | openai, anthropic, ollama | LLM provider for Cognee |
+| `llm_model` | e.g., `openai/gpt-4o-mini` | Model identifier |
+| `llm_endpoint` | URL | Custom endpoint (required for ollama) |
+| `embedding_provider` | openai, ollama | Embedding provider |
+| `embedding_model` | e.g., `openai/text-embedding-3-large` | Embedding model |
+| `default_format` | text, html | Default output format |
+| `telemetry_enabled` | true, false | Cognee telemetry (default: false) |
+
+Configuration is stored at `~/.config/sentinel/config.toml`.
+
 ### Debug Mode
 
 For troubleshooting or seeing Cognee operations:
