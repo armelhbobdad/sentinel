@@ -310,16 +310,16 @@ uv run sentinel config --reset
 
 **Available Settings:**
 
-| Key | Values | Description |
-|-----|--------|-------------|
-| `energy_threshold` | low, medium, high | Collision detection sensitivity |
-| `llm_provider` | openai, anthropic, ollama | LLM provider for Cognee |
-| `llm_model` | e.g., `openai/gpt-4o-mini` | Model identifier |
-| `llm_endpoint` | URL | Custom endpoint (required for ollama) |
-| `embedding_provider` | openai, ollama | Embedding provider |
+| Key | Values                                | Description |
+|-----|---------------------------------------|-------------|
+| `energy_threshold` | low, medium, high                     | Collision detection sensitivity |
+| `llm_provider` | openai, anthropic, ollama             | LLM provider for Cognee |
+| `llm_model` | e.g., `openai/gpt-5-mini`             | Model identifier |
+| `llm_endpoint` | URL                                   | Custom endpoint (required for ollama) |
+| `embedding_provider` | openai, ollama                        | Embedding provider |
 | `embedding_model` | e.g., `openai/text-embedding-3-large` | Embedding model |
-| `default_format` | text, html | Default output format |
-| `telemetry_enabled` | true, false | Cognee telemetry (default: false) |
+| `default_format` | text, html                            | Default output format |
+| `telemetry_enabled` | true, false                           | Cognee telemetry (default: false) |
 
 Configuration is stored at `~/.config/sentinel/config.toml`.
 

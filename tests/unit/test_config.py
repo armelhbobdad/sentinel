@@ -537,10 +537,10 @@ class TestConfigureCognee:
         """Verify LLM_MODEL env var is set from config."""
         from sentinel.core.config import SentinelConfig, configure_cognee
 
-        config = SentinelConfig(llm_model="openai/gpt-4o")
+        config = SentinelConfig(llm_model="openai/gpt-5")
         with patch.dict(os.environ, {}, clear=True):
             configure_cognee(config)
-            assert os.environ.get("LLM_MODEL") == "openai/gpt-4o"
+            assert os.environ.get("LLM_MODEL") == "openai/gpt-5"
 
     def test_configure_cognee_sets_embedding_provider(self) -> None:
         """Verify EMBEDDING_PROVIDER env var is set from config."""
@@ -621,7 +621,7 @@ class TestConfigureCognee:
         with patch.dict(os.environ, {}, clear=True):
             configure_cognee(config)
             assert os.environ.get("LLM_PROVIDER") == "openai"
-            assert os.environ.get("LLM_MODEL") == "openai/gpt-4o-mini"
+            assert os.environ.get("LLM_MODEL") == "openai/gpt-5-mini"
             assert os.environ.get("EMBEDDING_PROVIDER") == "openai"
             assert os.environ.get("EMBEDDING_MODEL") == "openai/text-embedding-3-large"
             assert os.environ.get("TELEMETRY_DISABLED") == "1"
