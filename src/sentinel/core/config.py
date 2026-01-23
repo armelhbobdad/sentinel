@@ -56,7 +56,7 @@ CONFIG_KEYS: dict[str, tuple[str, frozenset[str] | None]] = {
         VALID_LLM_PROVIDERS,
     ),
     "llm_model": (
-        "Model identifier (e.g., openai/gpt-4o-mini)",
+        "Model identifier (e.g., openai/gpt-5-mini)",
         None,  # Free-form
     ),
     "llm_endpoint": (
@@ -150,7 +150,7 @@ class SentinelConfig:
 
     # LLM settings (Story 5.3)
     llm_provider: str = "openai"
-    llm_model: str = "openai/gpt-4o-mini"
+    llm_model: str = "openai/gpt-5-mini"
     llm_endpoint: str = ""
     embedding_provider: str = "openai"
     embedding_model: str = "openai/text-embedding-3-large"
@@ -204,7 +204,7 @@ energy_threshold = "medium"
 
 # LLM Provider: "openai", "anthropic", or "ollama"
 llm_provider = "openai"
-llm_model = "openai/gpt-4o-mini"
+llm_model = "openai/gpt-5-mini"
 # llm_endpoint = ""  # Only needed for ollama
 
 # Embedding settings (defaults to OpenAI)
