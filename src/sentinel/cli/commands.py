@@ -1729,7 +1729,7 @@ def config(ctx: click.Context, key: str | None, value: str | None, reset: bool) 
     Valid keys:
       energy_threshold   - Detection sensitivity (low, medium, high)
       llm_provider       - LLM provider (openai, anthropic, ollama)
-      llm_model          - Model identifier (e.g., openai/gpt-4o-mini)
+      llm_model          - Model identifier (e.g., openai/gpt-5-mini)
       llm_endpoint       - Custom endpoint URL (required for ollama)
       embedding_provider - Embedding provider (openai, ollama)
       embedding_model    - Embedding model (e.g., openai/text-embedding-3-large)
