@@ -22,6 +22,16 @@
 
 Sentinel uses knowledge graphs to find hidden energy collisions in your schedule. Unlike traditional calendar apps that only check for time conflicts, Sentinel understands how activities affect your energy levels and detects problems like an emotionally draining Sunday dinner cascading into poor performance at Monday's high-stakes presentation.
 
+## Articles
+
+Learn more about the project and the technical challenges solved:
+
+| Article | Platform | Description |
+|---------|----------|-------------|
+| [Why Your Calendar App Misses the Real Conflicts](https://medium.com/@armelhbobdad/why-your-calendar-app-misses-the-real-conflicts-39f980bb1791) | Medium | The "why" behind energy conflicts |
+| [Taming LLM Output Chaos: A 3-Tier Normalization Pattern](https://dev.to/armelhbobdad/taming-llm-output-chaos-a-3-tier-normalisation-pattern-41jm) | dev.to | How Sentinel handles LLM variability |
+| [Building a CLI Tool with Cognee: Lessons from 5 Epics](https://dev.to/armelhbobdad/building-a-cli-tool-with-cognee-lessons-from-5-epics-8mi) | dev.to | 9 hard-won lessons integrating with Cognee |
+
 ## Features
 
 - **Schedule Ingestion**: Parse natural language schedule descriptions into a knowledge graph
