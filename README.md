@@ -170,6 +170,31 @@ Open `collision-report.html` in your browser to see:
 
 **Note:** Use `sentinel check -f html` for collision highlighting. The `sentinel graph -f html` command exports the graph without collision analysis.
 
+### HTML Visualization Examples
+
+Sentinel generates self-contained HTML files with interactive SVG visualizations.
+
+#### Collision Report (`sentinel check -f html`)
+
+Shows collision paths highlighted in red with warning cards:
+
+<!-- TODO: Add screenshot of collision report -->
+![Collision Report](assets/screenshots/check-collision.png)
+
+#### Graph After Ingestion (`sentinel paste -f html`)
+
+Displays the full knowledge graph with node types color-coded:
+
+<!-- TODO: Add screenshot of paste output -->
+![Graph Visualization](assets/screenshots/paste-output.png)
+
+**Legend:**
+- 🟢 **Green nodes**: User-stated facts (from your schedule text)
+- ⚪ **Gray nodes**: AI-inferred entities (energy states, time slots)
+- 🔴 **Red highlight**: Collision path
+
+> **Try it yourself:** Open the demo files in `assets/html-demos/` to explore the visualizations interactively.
+
 ### Complete Flow (One-Liner)
 
 ```bash
