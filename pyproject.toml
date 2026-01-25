@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Personal Energy Guardian - CLI tool for detecting schedule conflicts"
 readme = "README.md"
 authors = [
-    { name = "armel", email = "armelhbobdad@gmail.com" }
+    { name = "armel", email = "xxxxxxx@gmail.com" }
 ]
 requires-python = ">=3.11"
 dependencies = [
