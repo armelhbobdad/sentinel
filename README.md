@@ -16,7 +16,7 @@
 
 </div>
 
-> **Challenge Project** — This is a submission for the [Cognee Mini Challenge 2026 - January Edition](https://discord.com/channels/1120795297094832337/1317073613446185074/1461737840538025984). Primarily developed and tested on **Debian GNU/Linux 13 (trixie)** with **Python 3.11**. If you encounter any bugs, please [open an issue](https://github.com/armelhbobdad/sentinel/issues).
+> **Winner 🏆 — Cognee Mini Challenge 2026 (January Edition)** — This project won the [Cognee Mini Challenge 2026 - January Edition](https://discord.com/channels/1120795297094832337/1317073613446185074/1461737840538025984) ([🌱✨ **January Mini-Challenge Winners!** ✨🌱](https://discord.com/channels/1120795297094832337/1317073613446185074/1465746361713692835)). Primarily developed and tested on **Debian GNU/Linux 13 (trixie)** with **Python 3.11**. If you find this useful or interesting, consider giving it a ⭐ — it helps others discover the project. If you encounter any bugs, please [open an issue](https://github.com/armelhbobdad/sentinel/issues).
 
 ---
 
